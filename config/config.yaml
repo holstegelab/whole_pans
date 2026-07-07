@@ -1,0 +1,113 @@
+# Input paths on the execution server. Change these when moving the workflow.
+workflow_root: /gpfs/work3/0/qtholstg/pangenome/whole_pans
+
+assemblies:
+  directory: /gpfs/work3/0/qtholstg/pangenome/all_haps
+  patterns:
+    - "*.fa.gz"
+    - "*.fasta.gz"
+    - "*.fna.gz"
+    - "*.fa"
+    - "*.fasta"
+    - "*.fna"
+
+# Reuse the completed QC results and keep each later stage in its own result
+# directory. Change these server paths if the project is moved.
+results:
+  qc: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/assembly_qc/results
+  decontamination: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/assembly_decontamination/results
+  post_decontamination_qc: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/assembly_qc_decontaminated/results
+
+# Reuse the completed pre-decontamination QC selection without rebuilding the
+# original QC checkpoint. Remove this section to run the first QC pass as part
+# of this workflow.
+existing_qc:
+  included_assemblies: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/assembly_qc/results/summary/graph_included_assemblies.txt
+
+references:
+  CHM13: /gpfs/work3/0/qtholstg/pangenome/refs/CHM13.fa.gz
+  hg38: /gpfs/work3/0/qtholstg/pangenome/refs/GRCh38_primary_chr1-22_XY.fa
+
+# Each prefix is an NCBI BLAST nucleotide database containing only the named
+# non-human group. Marker must be one existing file belonging to that database.
+nonhuman_databases:
+  bacteria:
+    prefix: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/bacteria/bacteria
+    marker: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/bacteria/bacteria.ndb
+  viruses_and_viroids:
+    prefix: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/viruses_and_viroids/viruses_and_viroids
+    marker: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/viruses_and_viroids/viruses_and_viroids.ndb
+  archaea:
+    prefix: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/archaea/archaea
+    marker: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/archaea/archaea.ndb
+  fungi:
+    prefix: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/fungi/fungi
+    marker: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/fungi/fungi.ndb
+
+compleasm:
+  lineage: primates
+  odb: odb12
+
+alignment_min_mapq: 5
+
+# Conservative starting thresholds for haploid human HiFi assemblies.
+# A failing haplotype is excluded; its PASS/WARN mate remains eligible.
+thresholds:
+  fail:
+    min_total_length_bp: 2700000000
+    max_total_length_bp: 3300000000
+    min_contig_n50_bp: 10000000
+    max_n_percent: 1.0
+    min_compleasm_complete_percent: 95.0
+    max_compleasm_duplicated_percent: 5.0
+    min_best_query_aligned_percent: 90.0
+    min_best_reference_covered_percent: 90.0
+    min_best_alignment_identity_percent: 98.0
+  warn:
+    min_total_length_bp: 2850000000
+    max_total_length_bp: 3200000000
+    min_contig_n50_bp: 20000000
+    max_n_percent: 0.1
+    min_compleasm_complete_percent: 98.0
+    max_compleasm_duplicated_percent: 2.0
+    min_best_query_aligned_percent: 95.0
+    min_best_reference_covered_percent: 94.0
+    min_best_alignment_identity_percent: 99.0
+
+# Megablast settings. Classification also applies min_hsp_length_bp so short
+# conserved motifs cannot trigger removal.
+blast:
+  min_identity: 98.0
+  min_hsp_length_bp: 500
+  evalue: 0.0001
+  word_size: 28
+  max_target_seqs: 50
+
+classification:
+  human_min_mapq: 5
+  human_min_identity: 95.0
+  interval_merge_gap_bp: 1000
+
+  remove_min_nonhuman_bp: 10000
+  remove_min_nonhuman_percent: 90.0
+  remove_max_human_percent: 10.0
+
+  split_min_nonhuman_bp: 10000
+  split_min_nonhuman_percent: 5.0
+  split_max_human_overlap_percent: 10.0
+  split_min_human_outside_bp: 10000
+
+  review_min_nonhuman_bp: 1000
+
+resources:
+  compleasm_threads: 8
+  compleasm_mem_mb: 64000
+  compleasm_runtime_min: 240
+  minimap2_threads: 8
+  minimap2_mem_mb: 64000
+  minimap2_runtime_min: 240
+  minimap2_index_mem_mb: 32000
+  minimap2_index_runtime_min: 240
+  blast_threads: 8
+  blast_mem_mb: 32000
+  blast_runtime_min: 720

@@ -1,0 +1,16 @@
+name: whole-pans-compleasm
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  # The Bioconda compleasm recipe unnecessarily requires SEPP/PASTA even when
+  # a lineage is specified. Install the official tag directly to avoid that
+  # broken optional dependency chain. The URL hash was verified locally.
+  - python=3.12
+  - pandas=2.3.3
+  - miniprot=0.18
+  - hmmer=3.4
+  - pip
+  - pip:
+      - "https://github.com/huangnengCSU/compleasm/archive/refs/tags/v0.2.8.tar.gz#sha256=fbad2a389e13ef7bd8c9ef90112729aeaccaedba722d43f96c0fa9bcda24f1f6"

@@ -1,0 +1,14 @@
+name: whole-pans-tools
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  # Shared by assembly QC and decontamination rules.
+  - python=3.12
+  - seqkit=2.13.0
+  - minimap2=2.31
+  - blast=2.17.0
+  - libzlib=1.3.2
+  - zlib=1.3.2
+  - pyyaml=6.0.3

@@ -1,0 +1,11 @@
+.snakemake/
+.workflow_test/
+.idea/
+results/
+logs/
+benchmarks/
+__pycache__/
+*.py[cod]
+*.log
+slurm-*.out
+.DS_Store

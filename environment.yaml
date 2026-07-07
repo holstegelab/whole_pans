@@ -1,0 +1,8 @@
+name: whole-pans
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.12
+  - snakemake=9.23.1
