@@ -139,7 +139,8 @@ rule compleasm:
         assembly=assembly_input,
         lineage=f"{QC_OUTDIR}/resources/compleasm/{config['compleasm']['lineage']}_{config['compleasm']['odb']}.ready"
     output:
-        summary=temp(f"{QC_OUTDIR}/compleasm/{{assembly}}/summary.txt")
+        # Post-decontamination QC reuses this original-assembly result.
+        summary=f"{QC_OUTDIR}/compleasm/{{assembly}}/summary.txt"
     params:
         library=f"{QC_OUTDIR}/resources/compleasm/library",
         lineage=config["compleasm"]["lineage"],

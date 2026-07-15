@@ -20,6 +20,13 @@ def parse_args():
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--results-dir", required=True)
+    parser.add_argument(
+        "--compleasm-results-dir",
+        help=(
+            "Results tree containing compleasm/<assembly>/summary.txt; "
+            "defaults to --results-dir"
+        ),
+    )
     parser.add_argument("--assembly-output", required=True)
     parser.add_argument("--sample-output", required=True)
     parser.add_argument("--included-output", required=True)
@@ -153,6 +160,7 @@ def main():
         config = yaml.safe_load(handle)
     thresholds = config["thresholds"]
     results = Path(args.results_dir)
+    compleasm_results = Path(args.compleasm_results_dir or args.results_dir)
 
     with open(args.manifest, newline="") as handle:
         manifest = list(csv.DictReader(handle, delimiter="\t"))
@@ -174,7 +182,11 @@ def main():
             "path": entry["path"],
         }
         row.update(parse_seqkit(results / "stats" / f"{assembly_id}.seqkit.tsv"))
-        row.update(parse_compleasm(results / "compleasm" / assembly_id / "summary.txt"))
+        row.update(
+            parse_compleasm(
+                compleasm_results / "compleasm" / assembly_id / "summary.txt"
+            )
+        )
         row.update(
             parse_alignment(
                 results / "alignment_metrics" / "CHM13" / f"{assembly_id}.tsv", "chm13"

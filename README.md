@@ -38,7 +38,9 @@ check:
 Decontamination processes every assembly discovered from `assemblies.directory`
 and `assemblies.patterns`, including assemblies that failed the original QC.
 The second QC pass evaluates all cleaned assemblies and writes the final graph
-inclusion list. Missing CHM13/hg38 alignments needed for decontamination are
+inclusion list. It recalculates sequence and CHM13/hg38 alignment metrics from
+the cleaned FASTAs but reuses Compleasm summaries calculated from the original
+assemblies. Missing original Compleasm summaries and CHM13/hg38 alignments are
 generated under `results.qc`; the original QC summaries remain unchanged.
 
 In the current server configuration, workflow code remains in `whole_pans/`
@@ -109,8 +111,10 @@ snakemake --cores 32 \
 
 The workflow contains no scheduler submission settings. Add the Snakemake
 profile or executor used by the cluster. Compleasm uses `${TMPDIR:-/tmp}` for
-its large temporary file tree; set `TMPDIR` through the execution environment
-or cluster profile when node-local scratch is available.
+its large temporary file tree when it runs on original assemblies; set `TMPDIR`
+through the execution environment or cluster profile when node-local scratch
+is available. Post-decontamination QC does not rerun Compleasm on cleaned
+assemblies.
 
 Useful targets are:
 
@@ -121,6 +125,42 @@ snakemake --cores 32 --use-conda post_decontamination_qc
 snakemake --cores 1 --use-conda pangenome_qc
 snakemake --cores 32 --use-conda all
 ```
+
+### Check TMEM SV capture in the whole-genome graph
+
+The `tmem_sv_capture` target compares every sequence-resolved ALT allele in
+the regional TMEM VCF with the frozen whole-genome Minigraph rGFA. It selects
+alleles with an absolute REF/ALT length difference of at least 50 bp, embeds
+each allele between 20 kb GRCh38 flanks, maps the queries to the graph, and
+reports whether a residual SV-sized gap remains across the allele. This avoids
+comparing graph-specific node IDs or mixing the CHM13-rooted whole-graph
+coordinates with the GRCh38-projected regional VCF coordinates.
+
+Inspect the DAG first, then run on the server/cluster where the rule's conda
+environment and sufficient graph-indexing memory are available:
+
+```bash
+snakemake --snakefile workflow/rules/tmem_sv_capture.smk \
+  -n --cores 1 tmem_sv_capture
+
+snakemake --profile ~/.config/snakemake/zslurm/ \
+  --snakefile workflow/rules/tmem_sv_capture.smk \
+  --use-conda --rerun-incomplete \
+  tmem_sv_capture
+```
+
+Main outputs under
+`whole_pangenome/sv_pangenome/tmem_sv_capture/` are:
+
+- `tables/tmem_sv_capture.tsv`: one capture status per TMEM ALT allele;
+- `report/tmem_sv_capture_report.md`: overall verdict and flagged alleles;
+- `alignments/tmem_sv_alleles.whole_graph.gaf`: raw graph alignments for review;
+- `tables/tmem_sv_query_manifest.tsv`: coordinates, sizes, allele frequencies,
+  and overlap between known carriers and whole-graph input samples.
+
+`captured` means both reference anchors align and no insertion or deletion of
+at least `min_sv_size` remains across the allele. Treat low-quality/repetitive
+alignments marked `uncertain_*` as unresolved rather than absent.
 
 Each stage file is also a standalone entry point. From the project root
 (`/gpfs/work3/0/qtholstg/pangenome`), run:
@@ -214,8 +254,9 @@ directory:
 Post-decontamination QC outputs under the configured
 `results.post_decontamination_qc/summary` directory:
 
-- `assembly_qc.tsv` and `sample_qc.tsv`: QC metrics recalculated from cleaned
-  FASTAs;
+- `assembly_qc.tsv` and `sample_qc.tsv`: sequence and alignment metrics
+  recalculated from cleaned FASTAs, with Compleasm metrics reused from the
+  original assemblies;
 - `graph_included_assemblies.txt`: final cleaned FASTAs accepted for graph
   construction;
 - `graph_excluded_assemblies.tsv`: cleaned FASTAs that fail the second QC pass.

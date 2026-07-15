@@ -47,9 +47,9 @@ def all_post_qc_stats(wildcards):
     )
 
 
-def all_post_qc_compleasm(wildcards):
+def all_original_compleasm(wildcards):
     return expand(
-        f"{POST_QC_OUTDIR}/compleasm/{{assembly}}/summary.txt",
+        f"{QC_OUTDIR}/compleasm/{{assembly}}/summary.txt",
         assembly=ASSEMBLY_IDS,
     )
 
@@ -123,50 +123,6 @@ rule post_qc_fasta_stats:
         """
 
 
-rule post_qc_compleasm:
-    input:
-        assembly=post_qc_assembly_input,
-        lineage=f"{QC_OUTDIR}/resources/compleasm/{config['compleasm']['lineage']}_{config['compleasm']['odb']}.ready"
-    output:
-        summary=temp(f"{POST_QC_OUTDIR}/compleasm/{{assembly}}/summary.txt")
-    params:
-        library=f"{QC_OUTDIR}/resources/compleasm/library",
-        lineage=config["compleasm"]["lineage"],
-        odb=config["compleasm"]["odb"]
-    log:
-        f"{POST_QC_OUTDIR}/logs/compleasm/{{assembly}}.log"
-    benchmark:
-        f"{POST_QC_OUTDIR}/benchmarks/compleasm/{{assembly}}.tsv"
-    conda:
-        COMPLEASM_ENV
-    threads: config["resources"]["compleasm_threads"]
-    resources:
-        mem_mb=config["resources"]["compleasm_mem_mb"],
-        runtime_min=config["resources"]["compleasm_runtime_min"]
-    shell:
-        r"""
-        scratch_root="${{TMPDIR:-/tmp}}"
-        if [ ! -d "$scratch_root" ] || [ ! -w "$scratch_root" ]; then
-            echo "TMPDIR is not a writable directory: $scratch_root" >&2
-            exit 1
-        fi
-
-        workdir=$(mktemp -d -p "$scratch_root" "compleasm.post-clean.{wildcards.assembly}.XXXXXX")
-        trap 'rm -rf "$workdir"' EXIT
-        printf 'Compleasm scratch directory: %s\n' "$workdir" > {log:q}
-        compleasm run \
-          -a {input.assembly:q} \
-          -o "$workdir/result" \
-          -t {threads} \
-          -l {params.lineage:q} \
-          -L {params.library:q} \
-          --odb {params.odb:q} >> {log:q} 2>&1
-        mkdir -p "$(dirname {output.summary:q})"
-        cp "$workdir/result/summary.txt" {output.summary:q}
-        test -s {output.summary:q}
-        """
-
-
 rule post_qc_align_to_reference:
     input:
         assembly=post_qc_assembly_input,
@@ -226,7 +182,7 @@ rule summarize_post_decontamination_qc:
         manifest=f"{POST_QC_OUTDIR}/resources/all_cleaned_assemblies.tsv",
         config=f"{QC_OUTDIR}/resources/resolved_qc_config.json",
         stats=all_post_qc_stats,
-        compleasm=all_post_qc_compleasm,
+        original_compleasm=all_original_compleasm,
         chm13=all_post_qc_alignment_metrics("CHM13"),
         hg38=all_post_qc_alignment_metrics("hg38")
     output:
@@ -237,6 +193,7 @@ rule summarize_post_decontamination_qc:
         complete=POST_QC_COMPLETE_MARKER
     params:
         results_dir=POST_QC_OUTDIR,
+        compleasm_results_dir=QC_OUTDIR,
         script=SUMMARIZE_QC_SCRIPT
     log:
         f"{POST_QC_OUTDIR}/logs/summarize_qc.log"
@@ -252,6 +209,7 @@ rule summarize_post_decontamination_qc:
           --manifest {input.manifest:q} \
           --config {input.config:q} \
           --results-dir {params.results_dir:q} \
+          --compleasm-results-dir {params.compleasm_results_dir:q} \
           --assembly-output {output.assembly:q} \
           --sample-output {output.sample:q} \
           --included-output {output.included:q} \

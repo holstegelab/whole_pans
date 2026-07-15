@@ -49,6 +49,30 @@ pangenome:
   mash_mad_k: 3.5
   low_matching_hash_fraction: 0.90
 
+# Compare sequence-resolved TMEM SV alleles with the frozen whole-genome rGFA.
+# Paths are relative to whole_pans/Snakefile and remain portable across mounts.
+tmem_sv_capture:
+  results: ../whole_pangenome/sv_pangenome/tmem_sv_capture
+  whole_graph: ../whole_pangenome/sv_pangenome/results/graphs/sv_pangenome.minigraph.gfa
+  whole_assemblies: ../whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.ordered_assemblies.tsv
+  tmem_vcf: ../TMEM_UPD/tmem_out/pangenome_cactus_pipeline.vcf.gz
+  tmem_reference: ../TMEM_UPD/tmem.hg38.fa
+  # The regional VCF starts at POS 150001 on its padded source interval, while
+  # tmem.hg38.fa starts at that position. GRCh38 POS = 11946976 + VCF POS - 1.
+  vcf_position_offset: 150000
+  grch38_chrom: chr7
+  grch38_region_start: 11946976
+  min_sv_size: 50
+  flank_bp: 20000
+  min_mapping_length: 5000
+  min_anchor_bp: 2000
+  breakpoint_padding_bp: 500
+  min_mapq: 0
+  min_identity: 0.90
+  threads: 16
+  mem_mb: 96000
+  runtime_min: 360
+
 # Kraken2 database reused from
 # /home/georgii/AlzHub/short_read_analyzing_pipeline_Snakemake/constants.py:
 # RESOURCES/kraken/pluspf_20230605. The database is server-side, so the
@@ -64,6 +88,8 @@ kraken:
     "10239": viruses
 
 compleasm:
+  # Run on original assemblies only. Post-decontamination QC reuses these
+  # completeness metrics instead of rerunning Compleasm on cleaned FASTAs.
   lineage: primates
   odb: odb12
 

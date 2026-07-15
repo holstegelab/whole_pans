@@ -110,6 +110,28 @@ class FilterFastaTests(unittest.TestCase):
             self.assertEqual(rows[0]["output_contig"], "sample.hap1.h1tg000001l")
 
 
+class CompleasmReuseTests(unittest.TestCase):
+    def test_post_qc_reuses_persistent_original_compleasm_summaries(self):
+        qc_rules = (PROJECT_ROOT / "workflow" / "rules" / "QC.smk").read_text()
+        post_rules = (
+            PROJECT_ROOT / "workflow" / "rules" / "post_decontamination_QC.smk"
+        ).read_text()
+
+        self.assertNotIn("rule post_qc_compleasm:", post_rules)
+        self.assertIn("def all_original_compleasm", post_rules)
+        self.assertIn(
+            'f"{QC_OUTDIR}/compleasm/{{assembly}}/summary.txt"', post_rules
+        )
+        self.assertIn("--compleasm-results-dir", post_rules)
+        self.assertIn(
+            'summary=f"{QC_OUTDIR}/compleasm/{{assembly}}/summary.txt"', qc_rules
+        )
+        self.assertNotIn(
+            'summary=temp(f"{QC_OUTDIR}/compleasm/{{assembly}}/summary.txt")',
+            qc_rules,
+        )
+
+
 class PangenomeQcTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
