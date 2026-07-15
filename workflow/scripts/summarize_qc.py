@@ -24,12 +24,13 @@ def parse_args():
     parser.add_argument("--sample-output", required=True)
     parser.add_argument("--included-output", required=True)
     parser.add_argument("--excluded-output", required=True)
+    parser.add_argument("--complete-marker")
     parser.add_argument(
         "--allow-missing-mates",
         action="store_true",
         help=(
             "Keep a passing haplotype when its mate is absent from the input manifest. "
-            "Use this for post-decontamination QC of assemblies already selected by QC."
+            "Use only when missing mates are expected in that manifest."
         ),
     )
     return parser.parse_args()
@@ -285,6 +286,8 @@ def main():
     with open(args.included_output, "w") as handle:
         for path in included_paths:
             handle.write(path + "\n")
+    if args.complete_marker:
+        Path(args.complete_marker).touch()
 
     counts = defaultdict(int)
     for row in sample_rows:

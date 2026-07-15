@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument("--actions", required=True)
     parser.add_argument("--review", required=True)
     parser.add_argument("--graph-list", required=True)
+    parser.add_argument("--complete-marker", required=True)
     return parser.parse_args()
 
 
@@ -108,6 +109,7 @@ def main():
     with open(args.graph_list, "w") as handle:
         for path in graph_paths:
             handle.write(path + "\n")
+    Path(args.complete_marker).touch()
     print(
         f"Assemblies={len(summaries)} actions={len(actions)} review={len(review)}"
     )

@@ -15,3 +15,5 @@ rule all:
 
 
 include: "workflow/rules/post_decontamination_QC.smk"
+include: "workflow/rules/pangenome.smk"
+include: "workflow/rules/pangenome_qc.smk"

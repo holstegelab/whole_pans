@@ -19,6 +19,11 @@ def parse_args():
     parser.add_argument("--removed", required=True)
     parser.add_argument("--review", required=True)
     parser.add_argument("--split-map", required=True)
+    parser.add_argument(
+        "--header-prefix",
+        default="",
+        help="Prefix cleaned FASTA identifiers with PREFIX to keep graph names unique",
+    )
     return parser.parse_args()
 
 
@@ -59,6 +64,31 @@ def write_record(handle, header, sequence):
         handle.write(sequence[start : start + 80] + "\n")
 
 
+def validate_header_prefix(prefix):
+    if not prefix:
+        return ""
+    if prefix.startswith(">") or ":" in prefix or any(char.isspace() for char in prefix):
+        raise ValueError(
+            "FASTA header prefix must not contain '>', ':', or whitespace: "
+            f"{prefix!r}"
+        )
+    return prefix
+
+
+def prefix_header(full_header, prefix):
+    if not prefix:
+        return full_header
+    parts = full_header.split(maxsplit=1)
+    result = f"{prefix}.{parts[0]}"
+    if len(parts) == 2:
+        result += " " + parts[1]
+    return result
+
+
+def prefix_contig(contig, prefix):
+    return f"{prefix}.{contig}" if prefix else contig
+
+
 def merge_intervals(intervals):
     if not intervals:
         return []
@@ -88,6 +118,7 @@ def complement_intervals(length, removed):
 
 def main():
     args = parse_args()
+    header_prefix = validate_header_prefix(args.header_prefix)
     with open(args.decisions, newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
     decisions = {row["contig"]: row["decision"] for row in rows}
@@ -138,7 +169,8 @@ def main():
             length = len(sequence)
 
             if decision in {"KEEP", "REVIEW"}:
-                write_record(cleaned, full_header, sequence)
+                output_contig = prefix_contig(contig, header_prefix)
+                write_record(cleaned, prefix_header(full_header, header_prefix), sequence)
                 cleaned_records += 1
                 if decision == "REVIEW":
                     write_record(review, full_header, sequence)
@@ -146,7 +178,7 @@ def main():
                     {
                         "original_contig": contig,
                         "original_length_bp": length,
-                        "output_contig": contig,
+                        "output_contig": output_contig,
                         "start_1based": 1,
                         "end_1based": length,
                         "length_bp": length,
@@ -193,13 +225,14 @@ def main():
                     if start == end:
                         continue
                     output_name = f"{contig}__clean_part{number}__{start + 1}_{end}"
-                    write_record(cleaned, output_name, sequence[start:end])
+                    cleaned_output_name = prefix_contig(output_name, header_prefix)
+                    write_record(cleaned, cleaned_output_name, sequence[start:end])
                     cleaned_records += 1
                     map_writer.writerow(
                         {
                             "original_contig": contig,
                             "original_length_bp": length,
-                            "output_contig": output_name,
+                            "output_contig": cleaned_output_name,
                             "start_1based": start + 1,
                             "end_1based": end,
                             "length_bp": end - start,

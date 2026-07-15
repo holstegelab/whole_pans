@@ -10,6 +10,7 @@ rule post_decontamination_qc:
         f"{POST_QC_ENTRY_OUTDIR}/summary/sample_qc.tsv",
         f"{POST_QC_ENTRY_OUTDIR}/summary/graph_included_assemblies.txt",
         f"{POST_QC_ENTRY_OUTDIR}/summary/graph_excluded_assemblies.tsv",
+        complete=lambda wildcards: POST_QC_COMPLETE_MARKER,
 
 
 include: "decontamination.smk"
@@ -20,6 +21,10 @@ from pathlib import Path
 
 
 POST_QC_OUTDIR = config["results"]["post_decontamination_qc"]
+POST_QC_COMPLETE_MARKER = (
+    f"{POST_QC_OUTDIR}/summary/"
+    f"all_cleaned_assemblies.{DECONTAM_ASSEMBLY_MANIFEST_SIGNATURE[:12]}.complete"
+)
 
 
 def cleaned_assembly_id(path):
@@ -35,25 +40,25 @@ def post_qc_assembly_input(wildcards):
     return f"{DECONTAM_OUTDIR}/cleaned/{wildcards.assembly}.clean.fa.gz"
 
 
-def selected_post_qc_stats(wildcards):
+def all_post_qc_stats(wildcards):
     return expand(
         f"{POST_QC_OUTDIR}/stats/{{assembly}}.seqkit.tsv",
-        assembly=selected_assembly_ids(wildcards),
+        assembly=ASSEMBLY_IDS,
     )
 
 
-def selected_post_qc_compleasm(wildcards):
+def all_post_qc_compleasm(wildcards):
     return expand(
         f"{POST_QC_OUTDIR}/compleasm/{{assembly}}/summary.txt",
-        assembly=selected_assembly_ids(wildcards),
+        assembly=ASSEMBLY_IDS,
     )
 
 
-def selected_post_qc_alignment_metrics(reference):
+def all_post_qc_alignment_metrics(reference):
     def paths(wildcards):
         return expand(
             f"{POST_QC_OUTDIR}/alignment_metrics/{reference}/{{assembly}}.tsv",
-            assembly=selected_assembly_ids(wildcards),
+            assembly=ASSEMBLY_IDS,
         )
 
     return paths
@@ -63,9 +68,9 @@ rule post_qc_assembly_manifest:
     input:
         graph_list=f"{DECONTAM_OUTDIR}/summary/graph_cleaned_assemblies.txt"
     output:
-        f"{POST_QC_OUTDIR}/resources/assemblies.tsv"
+        f"{POST_QC_OUTDIR}/resources/all_cleaned_assemblies.tsv"
     run:
-        expected_ids = selected_assembly_ids(wildcards)
+        expected_ids = ASSEMBLY_IDS
         cleaned = {}
         with open(input.graph_list) as handle:
             for line in handle:
@@ -218,17 +223,18 @@ rule post_qc_paf_metrics:
 
 rule summarize_post_decontamination_qc:
     input:
-        manifest=f"{POST_QC_OUTDIR}/resources/assemblies.tsv",
+        manifest=f"{POST_QC_OUTDIR}/resources/all_cleaned_assemblies.tsv",
         config=f"{QC_OUTDIR}/resources/resolved_qc_config.json",
-        stats=selected_post_qc_stats,
-        compleasm=selected_post_qc_compleasm,
-        chm13=selected_post_qc_alignment_metrics("CHM13"),
-        hg38=selected_post_qc_alignment_metrics("hg38")
+        stats=all_post_qc_stats,
+        compleasm=all_post_qc_compleasm,
+        chm13=all_post_qc_alignment_metrics("CHM13"),
+        hg38=all_post_qc_alignment_metrics("hg38")
     output:
         assembly=f"{POST_QC_OUTDIR}/summary/assembly_qc.tsv",
         sample=f"{POST_QC_OUTDIR}/summary/sample_qc.tsv",
         included=f"{POST_QC_OUTDIR}/summary/graph_included_assemblies.txt",
-        excluded=f"{POST_QC_OUTDIR}/summary/graph_excluded_assemblies.tsv"
+        excluded=f"{POST_QC_OUTDIR}/summary/graph_excluded_assemblies.tsv",
+        complete=POST_QC_COMPLETE_MARKER
     params:
         results_dir=POST_QC_OUTDIR,
         script=SUMMARIZE_QC_SCRIPT
@@ -250,5 +256,5 @@ rule summarize_post_decontamination_qc:
           --sample-output {output.sample:q} \
           --included-output {output.included:q} \
           --excluded-output {output.excluded:q} \
-          --allow-missing-mates > {log:q} 2>&1
+          --complete-marker {output.complete:q} > {log:q} 2>&1
         """

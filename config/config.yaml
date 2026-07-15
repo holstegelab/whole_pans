@@ -11,38 +11,57 @@ assemblies:
     - "*.fasta"
     - "*.fna"
 
-# Reuse the completed QC results and keep each later stage in its own result
-# directory. Change these server paths if the project is moved.
+# Keep the original QC, decontamination, and cleaned-assembly QC results in
+# separate directories. Change these server paths if the project is moved.
 results:
   qc: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/assembly_qc/results
   decontamination: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/assembly_decontamination/results
   post_decontamination_qc: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/assembly_qc_decontaminated/results
 
-# Reuse the completed pre-decontamination QC selection without rebuilding the
-# original QC checkpoint. Remove this section to run the first QC pass as part
-# of this workflow.
-existing_qc:
-  included_assemblies: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/assembly_qc/results/summary/graph_included_assemblies.txt
-
 references:
   CHM13: /gpfs/work3/0/qtholstg/pangenome/refs/CHM13.fa.gz
   hg38: /gpfs/work3/0/qtholstg/pangenome/refs/GRCh38_primary_chr1-22_XY.fa
 
-# Each prefix is an NCBI BLAST nucleotide database containing only the named
-# non-human group. Marker must be one existing file belonging to that database.
-nonhuman_databases:
-  bacteria:
-    prefix: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/bacteria/bacteria
-    marker: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/bacteria/bacteria.ndb
-  viruses_and_viroids:
-    prefix: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/viruses_and_viroids/viruses_and_viroids
-    marker: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/viruses_and_viroids/viruses_and_viroids.ndb
-  archaea:
-    prefix: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/archaea/archaea
-    marker: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/archaea/archaea.ndb
-  fungi:
-    prefix: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/fungi/fungi
-    marker: /gpfs/work3/0/qtholstg/pangenome/refs/nonhuman_refseq/fungi/fungi.ndb
+# SV-only Minigraph pangenome construction. Paths in this section are relative
+# to this Snakefile, so the graph stage can run from a mounted project checkout.
+pangenome:
+  results: ../whole_pangenome/sv_pangenome/results
+  qc_results: ../whole_pangenome/sv_pangenome/qc_analysis
+  assemblies:
+    # Final cleaned FASTAs accepted by post-decontamination QC.
+    included_list: ../whole_pangenome/assembly_qc_decontaminated/results/summary/graph_included_assemblies.txt
+  references:
+    CHM13: ../refs/CHM13.fa.gz
+    hg38: ../refs/GRCh38_primary_chr1-22_XY.fa
+  vg: ../vg
+  # 1KCP sorted assemblies by Mash distance to CHM13 in ascending order.
+  # hg38 is always inserted second regardless of Mash distance.
+  order_by_mash: ascending
+  minigraph_preset: ggs
+  mash_kmer_size: 21
+  mash_sketch_size: 100000
+  threads: 16
+  mem_mb: 240000
+  runtime_min: 2880
+  analysis_mem_mb: 32000
+  analysis_runtime_min: 240
+  ln_sample_limit: 100000
+  mash_mad_k: 3.5
+  low_matching_hash_fraction: 0.90
+
+# Kraken2 database reused from
+# /home/georgii/AlzHub/short_read_analyzing_pipeline_Snakemake/constants.py:
+# RESOURCES/kraken/pluspf_20230605. The database is server-side, so the
+# workflow passes it as a runtime parameter rather than declaring it as an
+# input file that must be visible during local DAG construction.
+kraken:
+  db: /gpfs/work3/0/qtholstg/hg38_res_v2/kraken/pluspf_20230605
+  confidence: 0.0
+  minimum_hit_groups: 0
+  report_minimizer_data: true
+  target_taxids:
+    "2": bacteria
+    "10239": viruses
 
 compleasm:
   lineage: primates
@@ -74,30 +93,13 @@ thresholds:
     min_best_reference_covered_percent: 94.0
     min_best_alignment_identity_percent: 99.0
 
-# Megablast settings. Classification also applies min_hsp_length_bp so short
-# conserved motifs cannot trigger removal.
-blast:
-  min_identity: 98.0
-  min_hsp_length_bp: 500
-  evalue: 0.0001
-  word_size: 28
-  max_target_seqs: 50
-
 classification:
   human_min_mapq: 5
   human_min_identity: 95.0
-  interval_merge_gap_bp: 1000
 
-  remove_min_nonhuman_bp: 10000
-  remove_min_nonhuman_percent: 90.0
+  # A bacterial/viral Kraken2 call removes the whole contig only when existing
+  # human-reference alignments cover at most this fraction of the contig.
   remove_max_human_percent: 10.0
-
-  split_min_nonhuman_bp: 10000
-  split_min_nonhuman_percent: 5.0
-  split_max_human_overlap_percent: 10.0
-  split_min_human_outside_bp: 10000
-
-  review_min_nonhuman_bp: 1000
 
 resources:
   compleasm_threads: 8
@@ -108,6 +110,6 @@ resources:
   minimap2_runtime_min: 240
   minimap2_index_mem_mb: 32000
   minimap2_index_runtime_min: 240
-  blast_threads: 8
-  blast_mem_mb: 32000
-  blast_runtime_min: 720
+  kraken_threads: 8
+  kraken_mem_mb: 65000
+  kraken_runtime_min: 720

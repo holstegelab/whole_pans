@@ -32,15 +32,14 @@ check:
 
 - `assemblies.directory` and `assemblies.patterns`;
 - both reference FASTA paths under `references`;
-- every BLAST database `prefix` and `marker`;
+- the Kraken2 database path and target taxids under `kraken`;
 - all three result directories and per-rule resource requests.
 
-`existing_qc.included_assemblies` points to the final inclusion list from the
-completed first QC run. The workflow treats this as an external, fixed
-selection, so requesting decontamination does not rebuild the full original QC
-checkpoint. Missing CHM13/hg38 alignments needed by decontamination can still
-be regenerated under `results.qc`. Remove the `existing_qc` section to run the
-first QC pass as part of this workflow.
+Decontamination processes every assembly discovered from `assemblies.directory`
+and `assemblies.patterns`, including assemblies that failed the original QC.
+The second QC pass evaluates all cleaned assemblies and writes the final graph
+inclusion list. Missing CHM13/hg38 alignments needed for decontamination are
+generated under `results.qc`; the original QC summaries remain unchanged.
 
 In the current server configuration, workflow code remains in `whole_pans/`
 while all result trees are under `whole_pangenome/`.
@@ -62,9 +61,19 @@ are excluded when both fail or when the pair is missing or duplicates a
 haplotype. Change `workflow/scripts/summarize_qc.py` if the naming scheme
 differs.
 
-Each configured BLAST database must contain only the named non-human group. Do
-not use an unfiltered `nt` database because the database name is treated as the
-taxonomic label for every hit.
+Decontamination uses Kraken2 with the same `pluspf_20230605` database as
+`/home/georgii/AlzHub/short_read_analyzing_pipeline_Snakemake`. The database is
+passed as a runtime parameter because it is only visible on the server. Only
+contigs classified under the configured bacterial and viral taxids are removal
+candidates; target calls with substantial human-reference support are retained
+for review instead of being removed automatically.
+
+The Kraken report parser accepts both the standard six-column report and the
+eight-column report produced by `--report-minimizer-data`. Cleaned FASTA
+identifiers are written as `<assembly_id>.<original_contig>` so every rGFA
+source name is unique across haplotypes. The original FASTAs, removed FASTAs,
+and review FASTAs retain their original identifiers; `split_maps/*.tsv` records
+the original-to-cleaned name mapping.
 
 ## Run
 
@@ -109,6 +118,7 @@ Useful targets are:
 snakemake --cores 32 --use-conda qc
 snakemake --cores 32 --use-conda decontamination
 snakemake --cores 32 --use-conda post_decontamination_qc
+snakemake --cores 1 --use-conda pangenome_qc
 snakemake --cores 32 --use-conda all
 ```
 
@@ -121,7 +131,7 @@ snakemake --profile ~/.config/snakemake/zslurm/ \
   --snakefile whole_pans/workflow/rules/QC.smk \
   --use-conda --rerun-incomplete
 
-# Decontamination, reusing existing_qc.included_assemblies
+# Decontamination of every discovered assembly
 snakemake --profile ~/.config/snakemake/zslurm/ \
   --snakefile whole_pans/workflow/rules/decontamination.smk \
   --use-conda --rerun-incomplete
@@ -135,11 +145,49 @@ snakemake --profile ~/.config/snakemake/zslurm/ \
 No target name is required: each file defines its own stage as the default
 target. Add `--dry-run` to inspect the DAG before submission.
 
-With `existing_qc.included_assemblies` configured, `decontamination` starts
-from that completed selection. `post_decontamination_qc` automatically runs
-missing decontamination work. If `existing_qc` is removed, QC selection uses a
-Snakemake checkpoint; run `qc`, then repeat
-`snakemake -n post_decontamination_qc` to inspect the later stages in full.
+When expanding an existing QC-filtered decontamination run to all assemblies,
+run the normal decontamination command above without `--forcerun`. Existing
+Kraken, decision, cleaned FASTA, and stats outputs are reused; missing assembly
+outputs are added to the new all-assembly manifest and generated automatically.
+The first expanded run is still large because every newly added assembly needs
+Kraken2 and CHM13/hg38 alignments.
+
+After changing the Kraken report parser or cleaned FASTA naming, rebuild the
+affected results in this order. The first command reuses the existing Kraken2
+classification and report files; it does not force `kraken_contigs`.
+
+```bash
+# 1. Reclassify from existing Kraken reports and rewrite the cleaned FASTAs.
+snakemake --profile ~/.config/snakemake/zslurm/ \
+  --snakefile whole_pans/workflow/rules/decontamination.smk \
+  --use-conda --rerun-incomplete \
+  --forcerun classify_contigs clean_assembly cleaned_stats summarize_decontamination
+
+# 2. Recalculate QC from the corrected cleaned FASTAs.
+snakemake --profile ~/.config/snakemake/zslurm/ \
+  --snakefile whole_pans/workflow/rules/post_decontamination_QC.smk \
+  --use-conda --rerun-incomplete
+
+# 3. Rebuild the graph with unique donor and reference sequence names.
+snakemake --profile ~/.config/snakemake/zslurm/ \
+  --snakefile whole_pans/workflow/rules/pangenome.smk \
+  --use-conda --rerun-incomplete --force
+
+# 4. Recreate the graph QC report.
+snakemake --profile ~/.config/snakemake/zslurm/ \
+  --snakefile whole_pans/workflow/rules/pangenome_qc.smk \
+  --use-conda --rerun-incomplete
+```
+
+Run each command only after the previous command has completed successfully.
+The graph builder now stops instead of publishing a GFA if Minigraph reports
+inconsistent rGFA names or names associated with multiple source ranks.
+
+`decontamination` does not filter its inputs using the first QC result.
+`post_decontamination_qc` automatically runs missing decontamination work and
+then applies the QC thresholds to all cleaned assemblies. This allows an
+assembly rejected for excess non-human sequence or low query-aligned percentage
+to become eligible after cleaning.
 
 ## Main outputs
 
@@ -147,14 +195,15 @@ QC outputs under the configured `results.qc/summary` directory:
 
 - `assembly_qc.tsv`: metrics and PASS/WARN/FAIL reasons per assembly;
 - `sample_qc.tsv`: paired-haplotype decisions, including `PARTIAL` samples;
-- `graph_included_assemblies.txt`: assemblies accepted for decontamination;
+- `graph_included_assemblies.txt`: assemblies accepted by the original QC;
 - `graph_excluded_assemblies.tsv`: excluded assemblies and reasons.
 
 Decontamination outputs under the configured `results.decontamination`
 directory:
 
 - `summary/contamination_summary.tsv`: contamination counts and bases;
-- `summary/contig_actions.tsv`: REMOVE, SPLIT, and REVIEW decisions;
+- `summary/contig_actions.tsv`: REMOVE and REVIEW decisions; SPLIT fields are
+  retained for compatibility and remain empty for Kraken-based decontamination;
 - `summary/review_candidates.tsv`: ambiguous retained contigs;
 - `summary/graph_cleaned_assemblies.txt`: cleaned FASTAs for graph construction;
 - `cleaned/*.clean.fa.gz`: cleaned assemblies;
@@ -174,6 +223,43 @@ Post-decontamination QC outputs under the configured
 Use the post-decontamination `graph_included_assemblies.txt` for graph
 construction. The similarly named decontamination list contains every cleaned
 assembly before the second QC pass.
+
+SV pangenome outputs under the configured `pangenome.results` directory:
+
+- `graphs/sv_pangenome.minigraph.gfa`: SV-level Minigraph graph;
+- `metadata/sv_pangenome.ordered_assemblies.tsv`: CHM13, hg38, then cleaned
+  assemblies ordered by Mash distance to CHM13;
+- `metadata/chm13.mash_distances.tsv`: Mash distances used for ordering;
+- `metadata/sv_pangenome.graph_summary.tsv`: minimal construction-time GFA
+  summary.
+
+The separate `pangenome_qc` target analyzes an existing or newly built GFA:
+
+```bash
+snakemake --cores 1 --use-conda pangenome_qc
+```
+
+Graph QC follows `../pangenome_qc_plan.md` and writes a separate results tree
+at `pangenome.qc_results`:
+
+- `data/seg_records.parquet`: streamed rGFA `S`-record checkpoint with segment
+  ID, `SR`, `LN`, `SN`, normalized chromosome, `SO`, and `is_ref`;
+- `data/rank_tally.tsv`: per-rank segment count, segment bp, and link count;
+- `tables/integrity_checks.csv`: parser-vs-summary, rank, link-integrity,
+  tag-completeness, input-QC, and Mash-order checks;
+- `tables/graph_overview_stats.csv`: topology, content, segment-length, and
+  degree metrics;
+- `tables/per_source_contribution.csv`: build-order non-reference sequence
+  contribution and cumulative growth;
+- `tables/per_chromosome_nonref.csv`: non-reference bp and bp/Mb by chromosome;
+- `tables/mash_outliers.csv`: Mash-distance and low matching-hash outliers with
+  assembly-QC/decontamination context;
+- `figures/*.png`: segment-length, growth-curve, chromosome, and Mash-distance
+  plots;
+- `report/pangenome_qc_report.md`: written synthesis with links to tables and
+  figures;
+- `metadata/qc_tool_versions.tsv` and `metadata/run_manifest.tsv`: QC tool
+  versions and output manifest.
 
 Reference alignment is intended for gross outlier and contamination checks.
 Real human structural variation and reference-specific sequence should not be
