@@ -1,0 +1,3 @@
+assembly_id	path
+toy.hifi.hifiasm.bp.hap1.p_ctg	tests/fixtures/novel_sv/toy.hap1.fa
+toy.hifi.hifiasm.bp.hap2.p_ctg	tests/fixtures/novel_sv/toy.hap2.fa

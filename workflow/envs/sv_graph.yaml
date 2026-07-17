@@ -1,0 +1,9 @@
+name: whole-pans-sv-graph
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.10
+  - minigraph
+  - gfatools

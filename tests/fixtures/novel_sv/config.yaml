@@ -1,0 +1,53 @@
+novel_sv_discovery:
+  results: .workflow_test/novel_sv
+  frozen_graph: tests/fixtures/novel_sv/graph.gfa
+  graph_assemblies: tests/fixtures/novel_sv/ordered.tsv
+  cleaned_manifest: tests/fixtures/novel_sv/cleaned.tsv
+  original_qc: tests/fixtures/novel_sv/original_qc.tsv
+  post_qc: tests/fixtures/novel_sv/post_qc.tsv
+  contamination: tests/fixtures/novel_sv/contamination.tsv
+  previous_feasibility: tests/fixtures/novel_sv/feasibility.csv
+  graph_provenance:
+    tool_versions: tests/fixtures/novel_sv/tool_versions.tsv
+    graph_summary: tests/fixtures/novel_sv/graph_summary.tsv
+    build_log: tests/fixtures/novel_sv/build.log
+    qc_report: tests/fixtures/novel_sv/qc_report.md
+  sample_metadata: ""
+  read_manifest: ""
+  references:
+    CHM13: tests/fixtures/novel_sv/chm13.fa
+    hg38: tests/fixtures/novel_sv/hg38.fa
+  graph_screen:
+    batch_size: 2
+    threads: 1
+    mem_mb: 1000
+    runtime: 10
+  reference_calling:
+    threads: 1
+    alignment_preset: asm5
+    sort_mem_mb_per_thread: 256
+    alignment_mem_mb: 1000
+    alignment_runtime: 10
+    caller_mem_mb: 1000
+    caller_runtime: 10
+    sex_chromosomes:
+      mode: autosomes_only
+      exclude_contig_regex: "(?:chr)?[XY]"
+      par_bed:
+        CHM13: ""
+        hg38: ""
+      chrY_par_hard_masked:
+        CHM13: false
+        hg38: false
+    callers:
+      svim_asm: true
+      dipcall: true
+      pav: false
+    pav_snakefile: tests/fixtures/novel_sv/pav/Snakefile
+    pav_extra_config: {}
+  clustering:
+    breakpoint_distance: 500
+    length_similarity: 0.70
+  hifi_recommendations:
+    callable_threshold: 0.85
+    control_count: 1

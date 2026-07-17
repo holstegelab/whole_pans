@@ -1,0 +1,4 @@
+order	role	assembly_id	path	mash_distance
+1	reference	CHM13	tests/fixtures/novel_sv/chm13.fa	NA
+2	compatibility_path	hg38	tests/fixtures/novel_sv/hg38.fa	NA
+3	assembly	toy.hifi.hifiasm.bp.hap1.p_ctg.clean	tests/fixtures/novel_sv/toy.hap1.fa	0.001

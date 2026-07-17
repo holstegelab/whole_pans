@@ -1,0 +1,20 @@
+name: whole-pans-pav
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  # Dedicated native PAV environment. PAV itself is a pinned source checkout
+  # configured by novel_sv_discovery.pav_snakefile; its broad runtime
+  # dependency set is isolated from graph screening and the other callers.
+  - python=3.10
+  - snakemake-minimal
+  - biopython
+  - intervaltree
+  - matplotlib
+  - numpy
+  - pandas
+  - pysam
+  - scipy
+  - minimap2
+  - samtools

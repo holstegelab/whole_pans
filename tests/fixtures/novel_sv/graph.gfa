@@ -1,0 +1,4 @@
+H	VN:Z:1.0
+S	s1	ACGTACGTACGT	SN:Z:CHM13.chr1	SO:i:0	SR:i:0
+S	s2	ACGT	SN:Z:toy.contig	SO:i:0	SR:i:2
+L	s1	+	s2	+	0M

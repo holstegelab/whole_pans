@@ -2,8 +2,9 @@
 
 Snakemake workflow for human haplotype assembly QC, non-human sequence
 decontamination, and QC of the cleaned assemblies. Original assemblies are
-read-only. The default target runs all three stages and produces a final,
-post-decontamination assembly list for graph construction.
+read-only. The default target runs decontamination plus the lightweight
+post-decontamination sequence QC and produces the final assembly list for graph
+construction. The full original-assembly QC remains available as target `qc`.
 
 ## Layout
 
@@ -38,10 +39,10 @@ check:
 Decontamination processes every assembly discovered from `assemblies.directory`
 and `assemblies.patterns`, including assemblies that failed the original QC.
 The second QC pass evaluates all cleaned assemblies and writes the final graph
-inclusion list. It recalculates sequence and CHM13/hg38 alignment metrics from
-the cleaned FASTAs but reuses Compleasm summaries calculated from the original
-assemblies. Missing original Compleasm summaries and CHM13/hg38 alignments are
-generated under `results.qc`; the original QC summaries remain unchanged.
+inclusion list. It reuses the cleaned SeqKit statistics already produced by the
+decontamination stage and applies only the thresholds that can materially change
+after removing contigs: total length, contig N50, and N content. It does not run
+Compleasm or new CHM13/hg38 alignments for the cleaned FASTAs.
 
 In the current server configuration, workflow code remains in `whole_pans/`
 while all result trees are under `whole_pangenome/`.
@@ -93,7 +94,8 @@ snakemake -n --cores 1 qc
 snakemake --cores 1 --use-conda --conda-create-envs-only
 ```
 
-Compleasm needs its lineage downloaded once from a node with internet access:
+When running the optional original `qc` target, Compleasm needs its lineage
+downloaded once from a node with internet access:
 
 ```bash
 snakemake --cores 1 --use-conda compleasm_download
@@ -113,8 +115,7 @@ The workflow contains no scheduler submission settings. Add the Snakemake
 profile or executor used by the cluster. Compleasm uses `${TMPDIR:-/tmp}` for
 its large temporary file tree when it runs on original assemblies; set `TMPDIR`
 through the execution environment or cluster profile when node-local scratch
-is available. Post-decontamination QC does not rerun Compleasm on cleaned
-assemblies.
+is available. Compleasm is part of the original QC target only.
 
 Useful targets are:
 
@@ -126,41 +127,88 @@ snakemake --cores 1 --use-conda pangenome_qc
 snakemake --cores 32 --use-conda all
 ```
 
-### Check TMEM SV capture in the whole-genome graph
+#### Future extension: map complete TMEM haplotype paths
 
-The `tmem_sv_capture` target compares every sequence-resolved ALT allele in
-the regional TMEM VCF with the frozen whole-genome Minigraph rGFA. It selects
-alleles with an absolute REF/ALT length difference of at least 50 bp, embeds
-each allele between 20 kb GRCh38 flanks, maps the queries to the graph, and
-reports whether a residual SV-sized gap remains across the allele. This avoids
-comparing graph-specific node IDs or mixing the CHM13-rooted whole-graph
-coordinates with the GRCh38-projected regional VCF coordinates.
+A complementary, more comprehensive screen is to map every regional TMEM
+haplotype sequence to the whole-genome graph. This tests complete observed
+haplotypes and can identify complex or balanced graph paths that are difficult
+to express as one REF/ALT length change in the regional VCF. Use this path-level
+screen to discover candidate differences, then use the allele-centered workflow
+above to confirm and deduplicate them.
 
-Inspect the DAG first, then run on the server/cluster where the rule's conda
-environment and sufficient graph-indexing memory are available:
+Current-input observations that the future script must preserve:
+
+- `TMEM_UPD/tmem_out/seqfile.tsv` has 984 entries in the master input list;
+- the final TMEM subproblem seqfile has 380 entries: the hg38 reference plus
+  379 non-reference haplotypes from 288 samples;
+- the regional GFA contains 596 `W` records and no `P` records because some
+  haplotypes are represented by multiple walk fragments.
+
+Prefer the 379 non-reference FASTAs selected in this subproblem seqfile as the
+mapping queries:
+
+`TMEM_UPD/tmem_out/chrom-subproblems/seqfiles/chr7_11946976-12488798_sub_150000_391823.seqfile`
+
+A preparation script should read this seqfile, skip the hg38 reference when
+appropriate, discard empty inputs, and write one multi-FASTA with headers that
+retain the sample, haplotype, original contig, and source interval. Using the
+original subproblem FASTAs avoids turning one haplotype into several independent
+queries at GFA walk breaks.
+
+If the embedded graph walks themselves are required, they can instead be
+extracted with ODGI. Run these commands from `whole_pans/`:
 
 ```bash
-snakemake --snakefile workflow/rules/tmem_sv_capture.smk \
-  -n --cores 1 tmem_sv_capture
+gzip -dc ../TMEM_UPD/tmem_out/pangenome_cactus_pipeline.gfa.gz \
+  > /tmp/tmem_pangenome.gfa
 
-snakemake --profile ~/.config/snakemake/zslurm/ \
-  --snakefile workflow/rules/tmem_sv_capture.smk \
-  --use-conda --rerun-incomplete \
-  tmem_sv_capture
+odgi build -g /tmp/tmem_pangenome.gfa \
+  -o /tmp/tmem_pangenome.og -t 16
+
+odgi paths -i /tmp/tmem_pangenome.og -L \
+  > tmem_graph_path_names.txt
+
+odgi paths -i /tmp/tmem_pangenome.og -f \
+  > tmem_graph_paths.fa
 ```
 
-Main outputs under
-`whole_pangenome/sv_pangenome/tmem_sv_capture/` are:
+Map all regional sequences in one invocation so that the large whole-genome
+graph is loaded only once:
 
-- `tables/tmem_sv_capture.tsv`: one capture status per TMEM ALT allele;
-- `report/tmem_sv_capture_report.md`: overall verdict and flagged alleles;
-- `alignments/tmem_sv_alleles.whole_graph.gaf`: raw graph alignments for review;
-- `tables/tmem_sv_query_manifest.tsv`: coordinates, sizes, allele frequencies,
-  and overlap between known carriers and whole-graph input samples.
+```bash
+minigraph -cxasm -l5000 -t 16 \
+  ../whole_pangenome/sv_pangenome/results/graphs/sv_pangenome.minigraph.gfa \
+  tmem_regional_haplotypes.fa \
+  > tmem_haplotypes.whole_graph.gaf
+```
 
-`captured` means both reference anchors align and no insertion or deletion of
-at least `min_sv_size` remains across the allele. Treat low-quality/repetitive
-alignments marked `uncertain_*` as unresolved rather than absent.
+The future GAF summarization script should:
+
+1. select the best primary alignment while retaining secondary alignments for
+   ambiguity checks;
+2. require high query coverage and two-sided anchors around each internal
+   difference;
+3. parse `cg:Z` and flag internal insertions or deletions of at least 50 bp;
+4. flag split alignments, inversions, unexpected orientation, and inconsistent
+   graph traversal separately;
+5. ignore terminal clipping caused by regional extraction boundaries unless it
+   has independent two-sided support;
+6. project flanking `SR:i:0` graph nodes through their `SN` and `SO` tags to
+   CHM13 coordinates, while retaining node-plus-offset graph coordinates;
+7. cluster repeated events across carrier haplotypes by CHM13 anchor pair, SV
+   type and length, and inserted-sequence similarity;
+8. match event clusters back to the regional VCF where possible and submit each
+   candidate to the existing allele-centered confirmation workflow.
+
+An end-to-end path alignment with no residual insertion/deletion of at least
+50 bp supports representability of that regional haplotype in the frozen whole
+graph. A residual event is a candidate missing allele, not an automatic absence
+call: repetitive, low-MAPQ, split, and boundary alignments must remain
+`uncertain` until local allele remapping confirms them.
+
+Suggested outputs are one row per path alignment, one row per raw residual
+event, one row per clustered candidate SV, and a summary report linking GRCh38,
+CHM13, and graph node/offset coordinates.
 
 Each stage file is also a standalone entry point. From the project root
 (`/gpfs/work3/0/qtholstg/pangenome`), run:
@@ -254,9 +302,8 @@ directory:
 Post-decontamination QC outputs under the configured
 `results.post_decontamination_qc/summary` directory:
 
-- `assembly_qc.tsv` and `sample_qc.tsv`: sequence and alignment metrics
-  recalculated from cleaned FASTAs, with Compleasm metrics reused from the
-  original assemblies;
+- `assembly_qc.tsv` and `sample_qc.tsv`: cleaned-assembly sequence metrics and
+  PASS/WARN/FAIL decisions based on total length, contig N50, and N content;
 - `graph_included_assemblies.txt`: final cleaned FASTAs accepted for graph
   construction;
 - `graph_excluded_assemblies.tsv`: cleaned FASTAs that fail the second QC pass.
@@ -273,6 +320,155 @@ SV pangenome outputs under the configured `pangenome.results` directory:
 - `metadata/chm13.mash_distances.tsv`: Mash distances used for ordering;
 - `metadata/sv_pangenome.graph_summary.tsv`: minimal construction-time GFA
   summary.
+
+### Screen cleaned assemblies for graph-missing SV candidates
+
+`workflow/scripts/screen_novel_graph_svs.py` maps complete cleaned assemblies
+back to the frozen Minigraph rGFA. It parses internal insertion/deletion
+operations, retains 30--49 bp sensitivity evidence and nearby indel clusters,
+and requires mapping quality, alignment length, and two-sided aligned anchors
+before calling an event a high-confidence graph-missing SV. Residual events are candidates, not
+confirmed variants; repeats, fragmented contigs, complex rearrangements, and
+assembly errors still require local validation. A contig with multiple primary
+alignments is reported as `REVIEW_SPLIT_OR_COMPLEX_ALIGNMENT` instead of being
+declared free of candidates; balanced inversions and translocations require
+follow-up breakpoint analysis beyond the insertion/deletion CIGAR screen.
+
+The complete assembly-only first pass is implemented in
+`workflow/rules/novel_sv_discovery.smk`. It freezes and inventories the current
+graph, refreshes the excluded-assembly feasibility data, screens every cleaned
+assembly, calls paired samples against CHM13 and hg38, builds a provisional
+assembly-SV catalog, and emits both provisional and evidence-ranked
+sample-level HiFi request lists. Unpaired assemblies remain in the graph
+screen but are skipped by the diploid reference callers. From the directory
+containing `whole_pans/`, run the environment solve and DAG checks before
+submitting production jobs:
+
+```bash
+snakemake --snakefile whole_pans/workflow/rules/novel_sv_discovery.smk \
+  --use-conda --conda-create-envs-only --cores 1 novel_sv_discovery
+
+snakemake --snakefile whole_pans/workflow/rules/novel_sv_discovery.smk \
+  --use-conda --dry-run novel_sv_discovery
+
+snakemake --profile ~/.config/snakemake/zslurm/ \
+  --snakefile whole_pans/workflow/rules/novel_sv_discovery.smk \
+  --use-conda --rerun-incomplete novel_sv_discovery
+```
+
+All runtime paths are under `novel_sv_discovery` in `config/config.yaml` and
+are relative to `whole_pans/Snakefile`. Do not replace them with `realpath`
+values from a mounted checkout; the compute-server mount can differ.
+
+SVIM-asm and dipcall are enabled by default. SVIM-asm runs once per phased pair
+in diploid mode. Each input reference is copied to a writable uncompressed
+`reference.fa`, indexed once as `.fai`, `.dict`, and `.mmi`, and the `.mmi` is
+shared by minimap2 and dipcall. By default, known X/Y calls are excluded because
+sample sex, paternal-haplotype origin, and reference-specific PAR intervals are
+not yet available; raw X/Y caller VCF records are retained outside the merged
+catalog. Unprojected graph rows are retained but marked
+`UNRESOLVED_GRAPH_ORIGIN`, so they must not be assumed to be autosomal. Enable
+`sex_aware` mode only after those metadata and PAR BED files
+are populated and PAR sequence on reference chrY has been verified as
+hard-masked, as described in `NOVEL_SV_DISCOVERY_WORKFLOW_GUIDE.md`. In that
+mode, X/Y records from non-PAR-aware SVIM-asm and PAV remain excluded.
+
+Runtime dependencies are separated by purpose:
+
+- `sv_graph.yaml`: Minigraph/gfatools graph screening;
+- `sv_reference.yaml`: reference preparation, SVIM-asm, and dipcall;
+- `sv_catalog.yaml`: manifest, catalog, and ranking scripts;
+- `sv_discovery.yaml`: isolated native dependencies for the optional PAV
+  source workflow.
+
+PAV is an upstream source Snakemake workflow rather than a Bioconda
+executable. For the full three-caller production union, install a tagged,
+recursive PAV checkout on the server, point
+`reference_calling.pav_snakefile` to its `Snakefile`, and set
+`reference_calling.callers.pav: true`.
+
+The screening utility remains usable without Snakemake. First create the
+reusable graph-coordinate index and deterministic task table:
+
+```bash
+python workflow/scripts/screen_novel_graph_svs.py index-graph \
+  --gfa ../whole_pangenome/sv_pangenome/results/graphs/sv_pangenome.minigraph.gfa \
+  --output ../whole_pangenome/sv_pangenome/novel_sv_discovery/frozen_graph/graph_segments.tsv.gz
+
+python workflow/scripts/screen_novel_graph_svs.py tasks \
+  --manifest ../whole_pangenome/sv_pangenome/novel_sv_discovery/manifest/assembly_discovery_manifest.tsv \
+  --graph-assemblies ../whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.ordered_assemblies.tsv \
+  --batch-size 2 \
+  --output ../whole_pangenome/sv_pangenome/novel_sv_discovery/graph_screen/tasks.tsv
+```
+
+Task IDs come directly from `tasks.tsv`; do not recalculate a task count from
+the manifest. Each job atomically publishes one declared directory containing
+all outputs for its batch. For a manual pilot, choose a task ID and write to a
+new pilot directory:
+
+```bash
+TASK_ID=0001
+
+python workflow/scripts/screen_novel_graph_svs.py run \
+  --graph ../whole_pangenome/sv_pangenome/results/graphs/sv_pangenome.minigraph.gfa \
+  --segment-index ../whole_pangenome/sv_pangenome/novel_sv_discovery/frozen_graph/graph_segments.tsv.gz \
+  --manifest ../whole_pangenome/sv_pangenome/novel_sv_discovery/manifest/assembly_discovery_manifest.tsv \
+  --graph-assemblies ../whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.ordered_assemblies.tsv \
+  --tasks ../whole_pangenome/sv_pangenome/novel_sv_discovery/graph_screen/tasks.tsv \
+  --output-dir ../whole_pangenome/sv_pangenome/novel_sv_discovery/graph_screen/pilot_tasks/"$TASK_ID" \
+  --task-id "$TASK_ID" \
+  --threads 16
+```
+
+The output directory must not already exist. A successful task contains a
+non-empty `.complete`, `task_outputs.tsv`, and all per-assembly outputs; failed
+temporary directories are retained with a `.failed` suffix for diagnosis.
+
+Before launching all tasks, pilot 5--10 graph members, 10--20 missing-mate or
+`best_rescue` assemblies, and several fragmented assemblies by requesting their
+task IDs from `tasks.tsv`. Add leave-one-out or synthetic positive controls for
+SV-class/size recall. Use measured memory and runtime to update the configured
+resources and batch size. The 3.5 GB graph is loaded independently by each
+Minigraph process, so avoid excessive concurrency on a shared filesystem.
+
+After all tasks finish, let the checkpoint pass the exact task-directory set to
+the streamed aggregator. It rejects missing tasks and missing or empty
+per-assembly outputs:
+
+```bash
+snakemake --snakefile workflow/rules/novel_sv_discovery.smk \
+  --use-conda --rerun-incomplete --cores 32 \
+  summarize_novel_sv_graph_screen
+```
+
+The main first-pass outputs are:
+
+- `manifest/assembly_discovery_manifest.tsv`: all 982 haplotypes with graph
+  membership, refreshed QC/rescue status, contamination, metadata, and read
+  access fields;
+- `graph_screen/summary/all_assembly_novel_sv_summary.tsv`: callable fractions
+  and per-assembly decisions;
+- `graph_screen/summary/all_residual_sv_candidates.tsv.gz`: raw, review, and
+  high-confidence graph-residual evidence;
+- `reference_calls/reference_call_manifest.tsv`: traceable PAV, SVIM-asm, and
+  dipcall outputs for paired samples against CHM13 and hg38, according to
+  enabled callers;
+- `catalog/provisional_per_coordinate_frame_assembly_sv_catalog.tsv`:
+  assembly-only clustered alleles, deliberately not deduplicated between
+  CHM13, hg38, and unprojected graph coordinates, with `PENDING_HIFI` retained
+  where read evidence is still needed;
+- `hifi/recommended_hifi_samples.tsv`: one ranked row per recommended sample,
+  including poorly callable samples with zero assembly candidates.
+
+The catalog merger streams VCFs into a temporary SQLite database instead of
+loading the cohort union into RAM. Put `TMPDIR` on sufficiently large
+node-local scratch for this job. The read-based discovery, read genotyping,
+validated graph-v2 rebuild, and capture re-screen remain deferred second-pass
+work: they require a populated read manifest or a reviewed graph-v2 input list and
+must not be inferred while those inputs are unavailable. `minigraph --call`
+only genotypes bubbles already represented in the graph; it is not used as the
+missing-allele discovery method.
 
 The separate `pangenome_qc` target analyzes an existing or newly built GFA:
 

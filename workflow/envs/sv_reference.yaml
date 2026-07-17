@@ -1,0 +1,14 @@
+name: whole-pans-sv-reference
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.10
+  - minimap2
+  - samtools
+  - bcftools
+  - htslib
+  - svim-asm=1.0.3
+  - dipcall=0.3
+  - make

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -110,26 +111,132 @@ class FilterFastaTests(unittest.TestCase):
             self.assertEqual(rows[0]["output_contig"], "sample.hap1.h1tg000001l")
 
 
-class CompleasmReuseTests(unittest.TestCase):
-    def test_post_qc_reuses_persistent_original_compleasm_summaries(self):
+class PostDecontaminationQcTests(unittest.TestCase):
+    def test_post_qc_reuses_cleaned_stats_without_expensive_qc_jobs(self):
         qc_rules = (PROJECT_ROOT / "workflow" / "rules" / "QC.smk").read_text()
         post_rules = (
             PROJECT_ROOT / "workflow" / "rules" / "post_decontamination_QC.smk"
         ).read_text()
 
+        self.assertIn("stats=all_cleaned_stats", post_rules)
+        self.assertIn("--sequence-only", post_rules)
+        self.assertNotIn("rule post_qc_fasta_stats:", post_rules)
+        self.assertNotIn("rule post_qc_align_to_reference:", post_rules)
+        self.assertNotIn("rule post_qc_paf_metrics:", post_rules)
         self.assertNotIn("rule post_qc_compleasm:", post_rules)
-        self.assertIn("def all_original_compleasm", post_rules)
+        self.assertNotIn("all_original_compleasm", post_rules)
+        self.assertNotIn("--compleasm-results-dir", post_rules)
         self.assertIn(
-            'f"{QC_OUTDIR}/compleasm/{{assembly}}/summary.txt"', post_rules
-        )
-        self.assertIn("--compleasm-results-dir", post_rules)
-        self.assertIn(
-            'summary=f"{QC_OUTDIR}/compleasm/{{assembly}}/summary.txt"', qc_rules
-        )
-        self.assertNotIn(
             'summary=temp(f"{QC_OUTDIR}/compleasm/{{assembly}}/summary.txt")',
             qc_rules,
         )
+
+    def test_sequence_only_classification_does_not_require_reused_metrics(self):
+        module = load_script("summarize_qc")
+        thresholds = {
+            "fail": {
+                "min_total_length_bp": 90,
+                "max_total_length_bp": 110,
+                "min_contig_n50_bp": 40,
+                "max_n_percent": 1.0,
+            },
+            "warn": {
+                "min_total_length_bp": 95,
+                "max_total_length_bp": 105,
+                "min_contig_n50_bp": 45,
+                "max_n_percent": 0.5,
+            },
+        }
+        row = {
+            "total_length_bp": 100,
+            "contig_n50_bp": 50,
+            "n_percent": 0.0,
+        }
+
+        status, failures, warnings = module.classify(
+            row, thresholds, checks=module.SEQUENCE_CHECKS
+        )
+
+        self.assertEqual(status, "PASS")
+        self.assertEqual(failures, "")
+        self.assertEqual(warnings, "")
+
+    def test_sequence_only_cli_reads_decontamination_stats(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            results = tmp / "decontamination"
+            stats = results / "stats"
+            stats.mkdir(parents=True)
+            assembly_ids = [
+                "sample.hifi.hifiasm.bp.hap1.p_ctg",
+                "sample.hifi.hifiasm.bp.hap2.p_ctg",
+            ]
+            manifest = tmp / "manifest.tsv"
+            manifest.write_text(
+                "assembly_id\tpath\n"
+                + "".join(
+                    f"{assembly_id}\t/cleaned/{assembly_id}.clean.fa.gz\n"
+                    for assembly_id in assembly_ids
+                )
+            )
+            for assembly_id in assembly_ids:
+                (stats / f"{assembly_id}.clean.seqkit.tsv").write_text(
+                    "num_seqs\tsum_len\tN50\tmax_len\tGC(%)\tsum_n\n"
+                    "100\t100\t50\t60\t41.0\t0\n"
+                )
+            config = tmp / "config.yaml"
+            config.write_text(
+                "thresholds:\n"
+                "  fail:\n"
+                "    min_total_length_bp: 90\n"
+                "    max_total_length_bp: 110\n"
+                "    min_contig_n50_bp: 40\n"
+                "    max_n_percent: 1.0\n"
+                "  warn:\n"
+                "    min_total_length_bp: 95\n"
+                "    max_total_length_bp: 105\n"
+                "    min_contig_n50_bp: 45\n"
+                "    max_n_percent: 0.5\n"
+            )
+            assembly_output = tmp / "assembly.tsv"
+            sample_output = tmp / "sample.tsv"
+            included_output = tmp / "included.txt"
+            excluded_output = tmp / "excluded.tsv"
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "summarize_qc.py"),
+                    "--manifest",
+                    str(manifest),
+                    "--config",
+                    str(config),
+                    "--results-dir",
+                    str(results),
+                    "--seqkit-suffix",
+                    ".clean.seqkit.tsv",
+                    "--sequence-only",
+                    "--assembly-output",
+                    str(assembly_output),
+                    "--sample-output",
+                    str(sample_output),
+                    "--included-output",
+                    str(included_output),
+                    "--excluded-output",
+                    str(excluded_output),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            with assembly_output.open(newline="") as handle:
+                rows = list(csv.DictReader(handle, delimiter="\t"))
+            included = included_output.read_text().splitlines()
+
+        self.assertEqual([row["assembly_status"] for row in rows], ["PASS", "PASS"])
+        self.assertNotIn("compleasm_complete_percent", rows[0])
+        self.assertEqual(len(included), 2)
 
 
 class PangenomeQcTests(unittest.TestCase):
@@ -167,6 +274,39 @@ class PangenomeQcTests(unittest.TestCase):
         self.assertEqual(stats["stable_names_multiple_ranks"], 1)
         self.assertEqual(stats["stable_name_conflict_segments"], 2)
         self.assertEqual(stats["stable_name_conflict_bp"], 150)
+
+    def test_mash_outliers_accepts_sequence_only_post_qc_columns(self):
+        mash = pd.DataFrame(
+            [
+                {
+                    "assembly_id": "sample.hifi.hifiasm.bp.hap1.p_ctg.clean",
+                    "mash_distance": "0.01",
+                    "matching_hashes": "50/100",
+                }
+            ]
+        )
+        assembly_qc = pd.DataFrame(
+            [
+                {
+                    "assembly_id": "sample.hifi.hifiasm.bp.hap1.p_ctg",
+                    "assembly_status": "PASS",
+                    "warning_reasons": "",
+                    "fail_reasons": "",
+                    "contig_n50_bp": "50000000",
+                }
+            ]
+        )
+        args = SimpleNamespace(mad_k=3.5, low_matching_fraction=0.9)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            (output_dir / "tables").mkdir()
+            flagged, _paired = self.module.mash_outliers(
+                args, mash, assembly_qc, pd.DataFrame(), output_dir
+            )
+
+        self.assertIn("contig_n50_bp", flagged.columns)
+        self.assertNotIn("best_reference_covered_percent", flagged.columns)
 
 
 if __name__ == "__main__":

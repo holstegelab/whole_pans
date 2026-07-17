@@ -1,0 +1,2 @@
+assembly_id,sample,haplotype,mate_status,graph_context,rescue_tier,required_action
+toy.hifi.hifiasm.bp.hap2.p_ctg,toy,hap2,WARN,restore_missing_mate_for_graph_sample,best_rescue,incremental_test

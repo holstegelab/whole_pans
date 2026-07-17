@@ -14,12 +14,40 @@ ASSEMBLY_RE = re.compile(
     r"^(?P<sample>.+?)\.hifi\.hifiasm\.bp\.(?P<haplotype>hap[12])\.p_ctg(?:\..*)?$"
 )
 
+SEQUENCE_CHECKS = [
+    ("total_length_bp", ">=", "min_total_length_bp"),
+    ("total_length_bp", "<=", "max_total_length_bp"),
+    ("contig_n50_bp", ">=", "min_contig_n50_bp"),
+    ("n_percent", "<=", "max_n_percent"),
+]
+
+FULL_CHECKS = SEQUENCE_CHECKS + [
+    ("compleasm_complete_percent", ">=", "min_compleasm_complete_percent"),
+    ("compleasm_duplicated_percent", "<=", "max_compleasm_duplicated_percent"),
+    ("best_query_aligned_percent", ">=", "min_best_query_aligned_percent"),
+    ("best_reference_covered_percent", ">=", "min_best_reference_covered_percent"),
+    ("best_alignment_identity_percent", ">=", "min_best_alignment_identity_percent"),
+]
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--results-dir", required=True)
+    parser.add_argument(
+        "--seqkit-suffix",
+        default=".seqkit.tsv",
+        help="Suffix after the assembly ID under <results-dir>/stats",
+    )
+    parser.add_argument(
+        "--sequence-only",
+        action="store_true",
+        help=(
+            "Read only SeqKit statistics and apply length, N50, and N-content "
+            "thresholds. Intended for cleaned assemblies after decontamination."
+        ),
+    )
     parser.add_argument(
         "--compleasm-results-dir",
         help=(
@@ -110,23 +138,11 @@ def reason(metric, operator, threshold, value):
     return f"{metric}{operator}{threshold:g} (observed {value:.3f})"
 
 
-def classify(row, thresholds):
+def classify(row, thresholds, checks=FULL_CHECKS):
     fail = thresholds["fail"]
     warn = thresholds["warn"]
     failures = []
     warnings = []
-
-    checks = [
-        ("total_length_bp", ">=", "min_total_length_bp"),
-        ("total_length_bp", "<=", "max_total_length_bp"),
-        ("contig_n50_bp", ">=", "min_contig_n50_bp"),
-        ("n_percent", "<=", "max_n_percent"),
-        ("compleasm_complete_percent", ">=", "min_compleasm_complete_percent"),
-        ("compleasm_duplicated_percent", "<=", "max_compleasm_duplicated_percent"),
-        ("best_query_aligned_percent", ">=", "min_best_query_aligned_percent"),
-        ("best_reference_covered_percent", ">=", "min_best_reference_covered_percent"),
-        ("best_alignment_identity_percent", ">=", "min_best_alignment_identity_percent"),
-    ]
 
     for metric, operator, threshold_name in checks:
         value = row[metric]
@@ -181,33 +197,41 @@ def main():
             "haplotype": match.group("haplotype"),
             "path": entry["path"],
         }
-        row.update(parse_seqkit(results / "stats" / f"{assembly_id}.seqkit.tsv"))
         row.update(
-            parse_compleasm(
-                compleasm_results / "compleasm" / assembly_id / "summary.txt"
+            parse_seqkit(results / "stats" / f"{assembly_id}{args.seqkit_suffix}")
+        )
+        if not args.sequence_only:
+            row.update(
+                parse_compleasm(
+                    compleasm_results / "compleasm" / assembly_id / "summary.txt"
+                )
             )
-        )
-        row.update(
-            parse_alignment(
-                results / "alignment_metrics" / "CHM13" / f"{assembly_id}.tsv", "chm13"
+            row.update(
+                parse_alignment(
+                    results / "alignment_metrics" / "CHM13" / f"{assembly_id}.tsv",
+                    "chm13",
+                )
             )
-        )
-        row.update(
-            parse_alignment(
-                results / "alignment_metrics" / "hg38" / f"{assembly_id}.tsv", "hg38"
+            row.update(
+                parse_alignment(
+                    results / "alignment_metrics" / "hg38" / f"{assembly_id}.tsv",
+                    "hg38",
+                )
             )
-        )
-        row["best_query_aligned_percent"] = max(
-            row["chm13_query_aligned_percent"], row["hg38_query_aligned_percent"]
-        )
-        row["best_reference_covered_percent"] = max(
-            row["chm13_reference_covered_percent"], row["hg38_reference_covered_percent"]
-        )
-        row["best_alignment_identity_percent"] = max(
-            row["chm13_alignment_identity_percent"], row["hg38_alignment_identity_percent"]
-        )
+            row["best_query_aligned_percent"] = max(
+                row["chm13_query_aligned_percent"], row["hg38_query_aligned_percent"]
+            )
+            row["best_reference_covered_percent"] = max(
+                row["chm13_reference_covered_percent"],
+                row["hg38_reference_covered_percent"],
+            )
+            row["best_alignment_identity_percent"] = max(
+                row["chm13_alignment_identity_percent"],
+                row["hg38_alignment_identity_percent"],
+            )
+        checks = SEQUENCE_CHECKS if args.sequence_only else FULL_CHECKS
         row["assembly_status"], row["fail_reasons"], row["warning_reasons"] = classify(
-            row, thresholds
+            row, thresholds, checks=checks
         )
         assembly_rows.append(row)
         by_sample[row["sample"]].append(row)

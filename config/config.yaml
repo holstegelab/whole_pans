@@ -73,6 +73,100 @@ tmem_sv_capture:
   mem_mb: 96000
   runtime_min: 360
 
+# Assembly-only first pass for population SV alleles missing from the frozen
+# whole-genome graph. All paths remain relative to whole_pans/Snakefile so the
+# checkout can be mounted at a different local path from the execution server.
+novel_sv_discovery:
+  results: ../whole_pangenome/sv_pangenome/novel_sv_discovery
+  frozen_graph: ../whole_pangenome/sv_pangenome/results/graphs/sv_pangenome.minigraph.gfa
+  graph_assemblies: ../whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.ordered_assemblies.tsv
+  cleaned_manifest: ../whole_pangenome/assembly_qc_decontaminated/results/resources/all_cleaned_assemblies.tsv
+  original_qc: ../whole_pangenome/assembly_qc/results/summary/assembly_qc.tsv
+  post_qc: ../whole_pangenome/assembly_qc_decontaminated/results/summary/assembly_qc.tsv
+  contamination: ../whole_pangenome/assembly_decontamination/results/summary/contamination_summary.tsv
+  previous_feasibility: ../whole_pangenome/sv_pangenome/qc_analysis/tables/excluded_haplotype_feasibility.csv
+  graph_provenance:
+    tool_versions: ../whole_pangenome/sv_pangenome/results/metadata/tool_versions.tsv
+    graph_summary: ../whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.graph_summary.tsv
+    build_log: ../whole_pangenome/sv_pangenome/results/logs/build_sv_pangenome_graph.log
+    qc_report: ../whole_pangenome/sv_pangenome/qc_analysis/report/pangenome_qc_report.md
+  # Optional sample-level TSV columns: sample_id, population/ancestry,
+  # phenotype, sequencing_batch/batch, sex, and paternal_haplotype. Male
+  # sex-chromosome calling needs paternal_haplotype=hap1 or hap2 because
+  # dipcall requires paternal-first/maternal-second input order.
+  sample_metadata: ""
+  # Optional second-pass sample read manifest. Read-dependent rules are not in
+  # the assembly-only default target while HiFi data are unavailable.
+  read_manifest: ""
+  references:
+    CHM13: ../refs/CHM13.fa.gz
+    hg38: ../refs/GRCh38_primary_chr1-22_XY.fa
+
+  graph_screen:
+    # Two assemblies are processed sequentially per job so one graph load is
+    # amortized without making failed batches too large. Loading and indexing
+    # the frozen graph requires substantially more than 16 GB; recalibrate this
+    # conservative request from the first successful server benchmark.
+    batch_size: 2
+    threads: 16
+    mem_mb: 96000
+    runtime: 720
+    primary_min_chain_score: 5000
+    primary_secondary: 5
+    minigraph_extra: ""
+    rescue_callable_fraction: 0.85
+    sensitivity_min_chain_score: 1000
+    sensitivity_secondary: 20
+    sensitivity_minigraph_extra: ""
+    min_sv_size: 50
+    raw_min_size: 30
+    adjacent_indel_gap: 50
+    min_alignment: 5000
+    min_anchor: 2000
+    min_mapq: 5
+    min_identity: 0.90
+
+  reference_calling:
+    threads: 16
+    alignment_preset: asm5
+    sort_mem_mb_per_thread: 2048
+    alignment_mem_mb: 64000
+    alignment_runtime: 360
+    caller_mem_mb: 64000
+    caller_runtime: 720
+    # Sex and paternal haplotype origin are not yet available, so known X/Y
+    # calls are excluded from the merged catalog. Unprojected graph events are
+    # retained but explicitly flagged as unresolved. Raw caller VCFs remain.
+    # Set sex_aware only after metadata, PAR BEDs, and chrY masking are ready.
+    sex_chromosomes:
+      mode: autosomes_only
+      exclude_contig_regex: "(?:chr)?[XY]"
+      par_bed:
+        CHM13: ""
+        hg38: ""
+      # dipcall also requires PAR sequence on reference chrY to be hard-masked.
+      # In sex_aware mode with any male sample, point references above at such
+      # FASTAs and set these acknowledgements to true after verification.
+      chrY_par_hard_masked:
+        CHM13: false
+        hg38: false
+    callers:
+      svim_asm: true
+      dipcall: true
+      # PAV is a source Snakemake workflow, not a Bioconda executable. Clone
+      # and validate the tagged release on the server before enabling the
+      # optional third-caller production profile.
+      pav: false
+    pav_snakefile: ../tools/pav/Snakefile
+    pav_extra_config: {}
+
+  clustering:
+    breakpoint_distance: 500
+    length_similarity: 0.70
+  hifi_recommendations:
+    callable_threshold: 0.85
+    control_count: 20
+
 # Kraken2 database reused from
 # /home/georgii/AlzHub/short_read_analyzing_pipeline_Snakemake/constants.py:
 # RESOURCES/kraken/pluspf_20230605. The database is server-side, so the
@@ -88,8 +182,8 @@ kraken:
     "10239": viruses
 
 compleasm:
-  # Run on original assemblies only. Post-decontamination QC reuses these
-  # completeness metrics instead of rerunning Compleasm on cleaned FASTAs.
+  # Compleasm is used by the original QC target only. Post-decontamination QC
+  # evaluates only sequence statistics that can change after contig removal.
   lineage: primates
   odb: odb12
 

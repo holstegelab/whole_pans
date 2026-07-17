@@ -1,0 +1,6 @@
+name: whole-pans-sv-catalog
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.10

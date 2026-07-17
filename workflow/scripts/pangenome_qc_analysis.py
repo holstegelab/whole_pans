@@ -817,17 +817,20 @@ def mash_outliers(args, mash, assembly_qc, contamination, output_dir):
         qc = assembly_qc.copy()
         qc["assembly_id_clean"] = qc["assembly_id"].map(clean_base_id)
         mash["assembly_id_clean"] = mash["assembly_id"].map(clean_base_id)
+        qc_columns = [
+            column
+            for column in [
+                "assembly_id_clean",
+                "assembly_status",
+                "warning_reasons",
+                "fail_reasons",
+                "contig_n50_bp",
+                "best_reference_covered_percent",
+            ]
+            if column in qc.columns
+        ]
         mash = mash.merge(
-            qc[
-                [
-                    "assembly_id_clean",
-                    "assembly_status",
-                    "warning_reasons",
-                    "fail_reasons",
-                    "contig_n50_bp",
-                    "best_reference_covered_percent",
-                ]
-            ],
+            qc[qc_columns],
             on="assembly_id_clean",
             how="left",
         )
