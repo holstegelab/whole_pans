@@ -13,6 +13,7 @@ import hashlib
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 from collections import defaultdict
@@ -24,6 +25,7 @@ ASSEMBLY_RE = re.compile(
 )
 CIGAR_RE = re.compile(r"(\d+)([MIDNSHP=X])")
 PATH_RE = re.compile(r"([><])([^><]+)")
+STABLE_INTERVAL_RE = re.compile(r"^(.+):(\d+)-(\d+)$")
 
 ALIGNMENT_FIELDS = [
     "assembly_id",
@@ -136,6 +138,16 @@ TASK_FIELDS = [
 ]
 
 TASK_OUTPUT_FIELDS = ["assembly_id", "kind", "relative_path", "size_bytes"]
+COORDINATE_QC_FIELDS = ["metric", "value"]
+
+
+class SegmentIndex(dict):
+    """GFA segments plus lookup metadata for Minigraph path labels."""
+
+    def __init__(self):
+        super().__init__()
+        self.source_start_ranks = defaultdict(set)
+        self.rank_zero_source_paths = {}
 
 
 def open_text(path, mode="rt"):
@@ -163,6 +175,11 @@ def write_tsv(path, rows, fields, compress=None):
 def read_tsv(path):
     with open_text(path, "rt") as handle:
         return list(csv.DictReader(handle, delimiter="\t"))
+
+
+def iter_tsv(path):
+    with open_text(path, "rt") as handle:
+        yield from csv.DictReader(handle, delimiter="\t")
 
 
 def strip_fasta_suffix(value):
@@ -314,14 +331,38 @@ def build_tasks(manifest, graph_assemblies, output, batch_size=1):
 
 
 def load_segment_index(path):
-    result = {}
-    for row in read_tsv(path):
+    result = SegmentIndex()
+    for row in iter_tsv(path):
+        source = row.get("sn", "")
+        source_offset = (
+            int(row["so"]) if row.get("so", "") not in {"", "NA"} else None
+        )
+        source_rank = (
+            int(row["sr"]) if row.get("sr", "") not in {"", "NA"} else None
+        )
+        length = int(row["length"])
         result[row["segment_id"]] = {
-            "length": int(row["length"]),
-            "sn": row.get("sn", ""),
-            "so": int(row["so"]) if row.get("so", "") not in {"", "NA"} else None,
-            "sr": int(row["sr"]) if row.get("sr", "") not in {"", "NA"} else None,
+            "length": length,
+            "sn": source,
+            "so": source_offset,
+            "sr": source_rank,
         }
+        if source and source_offset is not None and source_rank is not None:
+            result.source_start_ranks[(source, source_offset)].add(source_rank)
+        if source and source_offset is not None and source_rank == 0:
+            source_path = result.rank_zero_source_paths.setdefault(
+                source,
+                {
+                    "length": 0,
+                    "sn": source,
+                    "so": 0,
+                    "sr": 0,
+                    "display_name": source,
+                },
+            )
+            source_path["length"] = max(
+                source_path["length"], source_offset + length
+            )
     return result
 
 
@@ -342,22 +383,70 @@ def normalize_chromosome(stable_source):
     return value
 
 
+def stable_interval(name, segments):
+    """Resolve Minigraph's ``SN:start-end`` path label.
+
+    Minigraph renders rGFA traversals using stable intervals rather than the
+    raw ``S`` record identifiers.  The interval can span more than one GFA
+    segment, so its source and coordinates are authoritative for projection;
+    the segment index supplies the rGFA source rank.
+    """
+    match = STABLE_INTERVAL_RE.match(name)
+    if not match:
+        return None
+    source, start_text, end_text = match.groups()
+    start = int(start_text)
+    end = int(end_text)
+    if end <= start:
+        return None
+    ranks = getattr(segments, "source_start_ranks", {}).get((source, start), set())
+    return {
+        "length": end - start,
+        "sn": source,
+        "so": start,
+        "sr": next(iter(ranks)) if len(ranks) == 1 else None,
+        "display_name": name,
+    }
+
+
+def stable_path(name, segments):
+    """Resolve a bare rank-0 stable path name emitted by Minigraph GAF."""
+    return getattr(segments, "rank_zero_source_paths", {}).get(name)
+
+
+def empty_graph_location():
+    return {
+        "segment": "",
+        "offset": "",
+        "sn": "",
+        "so": "",
+        "sr": "",
+        "stable_position": "",
+    }
+
+
 def locate_graph_position(path, path_position, segments):
     traversal = parse_graph_path(path)
     if not traversal:
-        return {"segment": "", "offset": "", "sn": "", "so": "", "sr": "", "stable_position": ""}
+        return empty_graph_location()
     remaining = max(0, int(path_position))
-    for direction, name in traversal:
-        segment = segments.get(name)
+    for traversal_index, (direction, name) in enumerate(traversal):
+        segment = (
+            segments.get(name)
+            or stable_interval(name, segments)
+            or stable_path(name, segments)
+        )
         if not segment:
-            return {"segment": "", "offset": "", "sn": "", "so": "", "sr": "", "stable_position": ""}
+            return empty_graph_location()
         length = segment["length"]
-        if remaining < length or (remaining == length and name == traversal[-1][1]):
+        if remaining < length or (
+            remaining == length and traversal_index == len(traversal) - 1
+        ):
             local = min(remaining, max(0, length - 1))
             offset = local if direction == ">" else max(0, length - local - 1)
             stable = segment["so"] + offset if segment["so"] is not None else ""
             return {
-                "segment": name,
+                "segment": segment.get("display_name", name),
                 "offset": offset,
                 "sn": segment["sn"],
                 "so": segment["so"] if segment["so"] is not None else "",
@@ -365,7 +454,124 @@ def locate_graph_position(path, path_position, segments):
                 "stable_position": stable,
             }
         remaining -= length
-    return {"segment": "", "offset": "", "sn": "", "so": "", "sr": "", "stable_position": ""}
+    return empty_graph_location()
+
+
+def annotate_event_location(row, segments):
+    annotated = dict(row)
+    location = locate_graph_position(
+        row.get("graph_path", ""), row.get("path_position_0", 0), segments
+    )
+    annotated.update(
+        {
+            "graph_segment": location["segment"],
+            "segment_offset_0": location["offset"],
+            "stable_source": location["sn"],
+            "stable_position_0": location["stable_position"],
+            "source_rank": location["sr"],
+            "chromosome": normalize_chromosome(location["sn"]),
+        }
+    )
+    return annotated
+
+
+def coordinate_is_resolved(row):
+    return row.get("graph_segment", "") != "" and row.get(
+        "segment_offset_0", ""
+    ) != ""
+
+
+def coordinate_qc(rows, min_sv_size):
+    total = 0
+    resolved = 0
+    for row in rows:
+        if int(abs(float(row.get("event_size_bp", 0) or 0))) < min_sv_size:
+            continue
+        total += 1
+        resolved += coordinate_is_resolved(row)
+    unresolved = total - resolved
+    return {
+        "total_sv_candidates": total,
+        "resolved_sv_candidates": resolved,
+        "unresolved_sv_candidates": unresolved,
+        "resolved_fraction": resolved / total if total else 1.0,
+        "unresolved_fraction": unresolved / total if total else 0.0,
+    }
+
+
+def validate_coordinate_qc(metrics, max_unresolved_fraction, context):
+    if metrics["unresolved_fraction"] > max_unresolved_fraction:
+        raise ValueError(
+            f"Unresolved graph coordinates exceed the configured limit for {context}: "
+            f"{metrics['unresolved_sv_candidates']}/{metrics['total_sv_candidates']} "
+            f"({metrics['unresolved_fraction']:.6f}) > {max_unresolved_fraction:.6f}"
+        )
+
+
+def reannotate_candidates(
+    candidates,
+    segment_index,
+    output,
+    qc_output,
+    min_sv_size=50,
+    max_unresolved_fraction=0.01,
+):
+    """Repair coordinates in saved residual candidates without rerunning Minigraph."""
+    segments = load_segment_index(segment_index)
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.tmp")
+    opener = gzip.open if str(output).endswith(".gz") else open
+    metrics = {
+        "total_sv_candidates": 0,
+        "resolved_sv_candidates": 0,
+    }
+    try:
+        with opener(temporary, "wt", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=EVENT_FIELDS,
+                delimiter="\t",
+                lineterminator="\n",
+                extrasaction="ignore",
+            )
+            writer.writeheader()
+            for row in iter_tsv(candidates):
+                annotated = annotate_event_location(row, segments)
+                writer.writerow(annotated)
+                if int(abs(float(row.get("event_size_bp", 0) or 0))) >= min_sv_size:
+                    metrics["total_sv_candidates"] += 1
+                    metrics["resolved_sv_candidates"] += coordinate_is_resolved(
+                        annotated
+                    )
+        total = metrics["total_sv_candidates"]
+        resolved = metrics["resolved_sv_candidates"]
+        metrics["unresolved_sv_candidates"] = total - resolved
+        metrics["resolved_fraction"] = resolved / total if total else 1.0
+        metrics["unresolved_fraction"] = (total - resolved) / total if total else 0.0
+        qc_rows = [
+            {"metric": key, "value": f"{value:.8f}" if isinstance(value, float) else value}
+            for key, value in metrics.items()
+        ]
+        qc_rows.extend(
+            [
+                {"metric": "max_unresolved_fraction", "value": max_unresolved_fraction},
+                {
+                    "metric": "status",
+                    "value": (
+                        "PASS"
+                        if metrics["unresolved_fraction"] <= max_unresolved_fraction
+                        else "FAIL"
+                    ),
+                },
+            ]
+        )
+        write_tsv(qc_output, qc_rows, COORDINATE_QC_FIELDS, compress=False)
+        validate_coordinate_qc(metrics, max_unresolved_fraction, candidates)
+        temporary.replace(output)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def parse_cigar(cigar):
@@ -707,9 +913,18 @@ def run_minigraph(graph, assembly, output, log, threads, min_chain_score, second
     ] + shlex.split(extra) + [str(graph), str(assembly)]
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(log).parent.mkdir(parents=True, exist_ok=True)
-    with gzip.open(output, "wb") as stdout, open(log, "ab") as stderr:
+    with gzip.open(output, "wb") as compressed, open(log, "ab") as stderr:
         stderr.write(("COMMAND: " + shlex.join(command) + "\n").encode())
-        subprocess.run(command, stdout=stdout, stderr=stderr, check=True)
+        with subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+        ) as process:
+            if process.stdout is None:
+                raise RuntimeError("Failed to capture minigraph stdout")
+            shutil.copyfileobj(process.stdout, compressed)
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, command)
 
 
 def analyze_one(task, args, segments):
@@ -771,6 +986,12 @@ def analyze_one(task, args, segments):
         "min_anchor": args.min_anchor,
     }
     events = events_from_alignments(records, task, segments, thresholds)
+    event_coordinate_qc = coordinate_qc(events, args.min_sv_size)
+    validate_coordinate_qc(
+        event_coordinate_qc,
+        getattr(args, "max_unresolved_coordinate_fraction", 0.01),
+        assembly_id,
+    )
     complex_rows = classify_split_alignments(records, task)
     sensitivity_metrics = callable_metrics(
         sensitivity,
@@ -909,24 +1130,20 @@ def run_task(args):
 def concatenate_tables(paths, output, fields):
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    opener = gzip.open if str(output).endswith(".gz") else open
-    with opener(output, "wt", newline="") as output_handle:
-        writer = csv.DictWriter(
-            output_handle,
-            fieldnames=fields,
-            delimiter="\t",
-            lineterminator="\n",
-            extrasaction="ignore",
-        )
-        writer.writeheader()
+    output_opener = gzip.open if str(output).endswith(".gz") else open
+    expected_header = ("\t".join(fields) + "\n").encode()
+    with output_opener(output, "wb") as output_handle:
+        output_handle.write(expected_header)
         for path in paths:
-            with open_text(path, "rt") as input_handle:
-                reader = csv.DictReader(input_handle, delimiter="\t")
-                if reader.fieldnames != fields:
+            input_opener = gzip.open if str(path).endswith(".gz") else open
+            with input_opener(path, "rb") as input_handle:
+                header = input_handle.readline()
+                fieldnames = header.rstrip(b"\r\n").decode().split("\t")
+                if fieldnames != fields:
                     raise ValueError(
-                        f"Unexpected columns in {path}: {reader.fieldnames}; expected {fields}"
+                        f"Unexpected columns in {path}: {fieldnames}; expected {fields}"
                     )
-                writer.writerows(reader)
+                shutil.copyfileobj(input_handle, output_handle, length=1024 * 1024)
 
 
 def summarize(args):
@@ -1037,8 +1254,23 @@ def parse_args(argv=None):
     run_parser.add_argument("--sensitivity-min-chain-score", type=int, default=1000)
     run_parser.add_argument("--sensitivity-secondary", type=int, default=20)
     run_parser.add_argument("--sensitivity-minigraph-extra", default="")
+    run_parser.add_argument(
+        "--max-unresolved-coordinate-fraction", type=float, default=0.01
+    )
     run_parser.add_argument("--completion-marker")
     add_screen_thresholds(run_parser)
+
+    reannotate_parser = subparsers.add_parser(
+        "reannotate", help="Repair saved residual-event graph coordinates"
+    )
+    reannotate_parser.add_argument("--candidates", required=True)
+    reannotate_parser.add_argument("--segment-index", required=True)
+    reannotate_parser.add_argument("--output", required=True)
+    reannotate_parser.add_argument("--qc-output", required=True)
+    reannotate_parser.add_argument("--min-sv-size", type=int, default=50)
+    reannotate_parser.add_argument(
+        "--max-unresolved-coordinate-fraction", type=float, default=0.01
+    )
 
     summary_parser = subparsers.add_parser("summarize", help="Combine all assembly outputs")
     summary_parser.add_argument("--manifest", required=True)
@@ -1056,6 +1288,15 @@ def main(argv=None):
         build_tasks(args.manifest, args.graph_assemblies, args.output, args.batch_size)
     elif args.command == "run":
         run_task(args)
+    elif args.command == "reannotate":
+        reannotate_candidates(
+            args.candidates,
+            args.segment_index,
+            args.output,
+            args.qc_output,
+            args.min_sv_size,
+            args.max_unresolved_coordinate_fraction,
+        )
     elif args.command == "summarize":
         summarize(args)
     else:

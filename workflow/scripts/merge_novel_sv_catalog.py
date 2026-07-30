@@ -56,6 +56,10 @@ CATALOG_FIELDS = [
     "carrier_samples",
     "carrier_assembly_count",
     "independent_sample_count",
+    "graph_member_control_assemblies",
+    "graph_member_control_count",
+    "linear_supporting_samples",
+    "linear_supporting_sample_count",
     "discovery_methods",
     "caller_support",
     "assembly_qc_tiers",
@@ -219,14 +223,30 @@ def parse_graph_candidates(path, min_sv_size, excluded_contig=None):
             continue
         stable_source = source.get("stable_source", "")
         source_rank = source.get("source_rank", "")
+        graph_segment = source.get("graph_segment", "")
+        segment_offset = source.get("segment_offset_0", "")
+        if not graph_segment or segment_offset == "":
+            raise ValueError(
+                "Graph candidate lacks a resolved graph coordinate: "
+                f"{source.get('event_id', '<unknown>')}. Run the graph-screen "
+                "reannotate step before catalog construction."
+            )
         if stable_source and str(source_rank) == "0":
             coordinate_system = "CHM13"
             chromosome = source.get("chromosome", stable_source)
             position = int_value(source.get("stable_position_0"))
         else:
             coordinate_system = "GRAPH"
-            chromosome = source.get("graph_segment", "unprojected")
-            position = int_value(source.get("segment_offset_0"))
+            chromosome = (
+                f"{stable_source}|SR{source_rank or 'UNKNOWN'}"
+                if stable_source
+                else graph_segment
+            )
+            position = int_value(
+                source.get("stable_position_0")
+                if stable_source
+                else segment_offset
+            )
         filter_labels = {
             chromosome,
             source.get("chromosome", ""),
@@ -257,8 +277,8 @@ def parse_graph_candidates(path, min_sv_size, excluded_contig=None):
             "haplotype": source.get("haplotype", ""),
             "source_path": path,
             "source_filter": source.get("filter_reasons", ""),
-            "graph_segment": source.get("graph_segment", ""),
-            "segment_offset_0": source.get("segment_offset_0", ""),
+            "graph_segment": graph_segment,
+            "segment_offset_0": segment_offset,
             "confidence_tier": source.get("confidence_tier", "REVIEW"),
         }
         row["evidence_id"] = evidence_id(["graph", row["source_event_id"]])
@@ -359,9 +379,21 @@ def unique_join(values):
     return ";".join(sorted({str(value) for value in values if value not in {"", None}}))
 
 
+def true_value(value):
+    return str(value).lower() in {"1", "true", "yes"}
+
+
 def catalog_row(cluster, index):
+    graph_rows = [row for row in cluster if row["discovery_method"] == "graph_residual"]
+    discovery_rows = [row for row in graph_rows if not true_value(row.get("graph_member"))]
+    if not discovery_rows:
+        # Self-alignments from assemblies already used to construct the graph
+        # calibrate mapping background; they are not missing-allele discoveries.
+        return None
+    control_rows = [row for row in graph_rows if true_value(row.get("graph_member"))]
+    linear_rows = [row for row in cluster if row["discovery_method"] != "graph_residual"]
     representative = sorted(
-        cluster,
+        discovery_rows,
         key=lambda row: (
             row["confidence_tier"] not in {"HIGH_CONFIDENCE", "CALLER_PASS"},
             -row["svlen"],
@@ -370,19 +402,43 @@ def catalog_row(cluster, index):
     )[0]
     methods = {row["discovery_method"] for row in cluster}
     callers = {row["caller"] for row in cluster}
-    samples = {row["sample_id"] for row in cluster if row["sample_id"]}
-    assemblies = {row["assembly_id"] for row in cluster if row["assembly_id"]}
-    qc_tiers = {row.get("assembly_qc_tier", "") for row in cluster if row.get("assembly_qc_tier")}
-    high_evidence = any(row["confidence_tier"] in {"HIGH_CONFIDENCE", "CALLER_PASS"} for row in cluster)
-    independent_methods = len(methods) >= 2 or len(callers) >= 2
-    if high_evidence and (independent_methods or len(samples) >= 2):
+    samples = {row["sample_id"] for row in discovery_rows if row["sample_id"]}
+    assemblies = {row["assembly_id"] for row in discovery_rows if row["assembly_id"]}
+    control_assemblies = {
+        row["assembly_id"] for row in control_rows if row["assembly_id"]
+    }
+    linear_samples = {row["sample_id"] for row in linear_rows if row["sample_id"]}
+    qc_tiers = {
+        row.get("assembly_qc_tier", "")
+        for row in discovery_rows
+        if row.get("assembly_qc_tier")
+    }
+    high_graph_evidence = any(
+        row["confidence_tier"] == "HIGH_CONFIDENCE" for row in discovery_rows
+    )
+    linear_pass_support = any(
+        row["confidence_tier"] == "CALLER_PASS" for row in linear_rows
+    )
+    poor_only = bool(qc_tiers) and qc_tiers <= {
+        "fragmented_rescue",
+        "not_recommended",
+    }
+    if control_rows or poor_only:
+        confidence = "UNCERTAIN"
+    elif high_graph_evidence and (linear_pass_support or len(samples) >= 2):
         confidence = "HIGH"
-    elif high_evidence:
+    elif high_graph_evidence:
         confidence = "MEDIUM"
     else:
         confidence = "UNCERTAIN"
-    poor_only = bool(qc_tiers) and qc_tiers <= {"fragmented_rescue", "not_recommended"}
-    validation = "PENDING_HIFI" if poor_only and len(samples) < 2 and not independent_methods else "ASSEMBLY_ONLY_REVIEW"
+    if control_rows:
+        validation = "GRAPH_MEMBER_CONTROL_OVERLAP"
+    elif poor_only:
+        validation = "PENDING_HIFI"
+    elif linear_pass_support:
+        validation = "LINEAR_CALLER_SUPPORTED"
+    else:
+        validation = "ASSEMBLY_ONLY_REVIEW"
     key = (
         f"{representative['coordinate_system']}|{representative['chromosome']}|"
         f"{representative['position_0']}|{representative['svtype']}|{representative['svlen']}|{index}"
@@ -404,17 +460,25 @@ def catalog_row(cluster, index):
         "alternate_allele": sequence,
         "graph_segment": representative.get("graph_segment", ""),
         "segment_offset_0": representative.get("segment_offset_0", ""),
-        "carrier_assemblies": unique_join(row["assembly_id"] for row in cluster),
+        "carrier_assemblies": unique_join(
+            row["assembly_id"] for row in discovery_rows
+        ),
         "carrier_haplotypes": unique_join(
-            f"{row['sample_id']}:{row['haplotype']}" for row in cluster if row["sample_id"] and row["haplotype"]
+            f"{row['sample_id']}:{row['haplotype']}"
+            for row in discovery_rows
+            if row["sample_id"] and row["haplotype"]
         ),
         "carrier_samples": unique_join(samples),
         "carrier_assembly_count": len(assemblies),
         "independent_sample_count": len(samples),
+        "graph_member_control_assemblies": unique_join(control_assemblies),
+        "graph_member_control_count": len(control_assemblies),
+        "linear_supporting_samples": unique_join(linear_samples),
+        "linear_supporting_sample_count": len(linear_samples),
         "discovery_methods": unique_join(methods),
         "caller_support": unique_join(callers),
         "assembly_qc_tiers": unique_join(qc_tiers),
-        "graph_representation_status": "CANDIDATE_MISSING_ALLELE",
+        "graph_representation_status": "RESIDUAL_TO_FROZEN_GRAPH",
         "validation_status": validation,
         "confidence": confidence,
         "evidence_ids": unique_join(row["evidence_id"] for row in cluster),
@@ -548,10 +612,16 @@ def main():
         clusters = cluster_sorted_evidence(
             ordered_evidence(), args.breakpoint_distance, args.length_similarity
         )
-        catalog = (
-            catalog_row(cluster, index)
-            for index, cluster in enumerate(clusters, start=1)
-        )
+        def catalog_rows():
+            catalog_index = 0
+            for cluster in clusters:
+                row = catalog_row(cluster, catalog_index + 1)
+                if row is None:
+                    continue
+                catalog_index += 1
+                yield row
+
+        catalog = catalog_rows()
         write_tsv(args.catalog_output, catalog, CATALOG_FIELDS)
     finally:
         connection.close()

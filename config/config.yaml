@@ -125,6 +125,9 @@ novel_sv_discovery:
     min_anchor: 2000
     min_mapq: 5
     min_identity: 0.90
+    # Abort before catalog construction if stable graph coordinates cannot be
+    # recovered for more than this fraction of >=50 bp residual events.
+    max_unresolved_coordinate_fraction: 0.01
 
   reference_calling:
     threads: 16
@@ -165,6 +168,7 @@ novel_sv_discovery:
     length_similarity: 0.70
   hifi_recommendations:
     callable_threshold: 0.85
+    validation_count: 50
     control_count: 20
 
 # Kraken2 database reused from

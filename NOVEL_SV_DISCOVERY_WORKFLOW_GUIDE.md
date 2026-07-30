@@ -253,6 +253,12 @@ python -m unittest discover \
   -p 'test_*.py'
 ```
 
+This command uses Python's standard `unittest` discovery mode. `-s` selects the
+test directory and `-p` limits discovery to files named `test_*.py`, matching
+the repository's current test layout. Run it before any large Snakemake target
+because it catches parser, manifest, and catalog logic regressions without
+touching the large assembly inputs.
+
 The novel-SV tests cover rGFA indexing, GAF CIGAR parsing, adjacent-indel
 handling, anchor checks, split alignments, deterministic task creation, and
 catalog clustering.
@@ -337,6 +343,14 @@ print("priority", Counter(row["discovery_priority"] for row in rows))
 PY
 ```
 
+The `python - <<'PY'` form runs the following inline Python program from
+standard input. The quoted `PY` delimiter keeps the shell from expanding values
+inside the snippet before Python sees them. This snippet reads the
+tab-separated manifest with `csv.DictReader`, treats each row as a dictionary
+keyed by the header names, then prints cohort-level counts for assemblies,
+unique samples, graph membership, rescue tier, and discovery priority. It is a
+metadata check only; it does not open any assembly FASTA files.
+
 For the current cohort, the expected high-level checks are 982 assemblies from
 491 samples, including 196 graph members and 786 assemblies outside the graph.
 Treat a mismatch as a reason to review the upstream manifests before starting
@@ -407,6 +421,16 @@ python workflow/scripts/screen_novel_graph_svs.py run \
 
 cd ..
 ```
+
+This Python command invokes the graph-screening helper directly for one task.
+The `run` subcommand reads the frozen graph, the precomputed segment index, the
+assembly discovery manifest, the original graph-assembly list, and the
+deterministic `tasks.tsv` file. `--task-id` selects a single batch from
+`tasks.tsv`, `--output-dir` points at a pilot-only destination, and `--threads`
+sets the Minigraph thread count. Use this direct command for calibration and
+debugging; use the Snakemake target for production so logs, resources,
+benchmarks, Conda activation, and completion markers remain managed by the
+workflow.
 
 For scheduler execution, prefer the Snakemake task output so resources,
 logging, Conda activation, benchmarking, and completion markers are retained:
@@ -484,6 +508,24 @@ The aggregator streams these tables instead of loading cohort-wide output into
 memory. It verifies that its checkpoint-derived task-directory set exactly
 matches `tasks.tsv` and fails on any missing or empty per-assembly file.
 
+Before catalog construction, the workflow reannotates the saved residual table
+using the rGFA segment index. This converts Minigraph path labels such as
+`chr15:start-end`, as well as bare rank-0 paths such as `chr5`, into stable
+source coordinates without rerunning Minigraph:
+
+```bash
+snakemake \
+  --snakefile whole_pans/workflow/rules/novel_sv_discovery.smk \
+  --use-conda --cores 1 \
+  reannotate_novel_sv_graph_coordinates
+```
+
+The corrected candidates are written to
+`graph_screen/coordinate_qc/all_residual_sv_candidates.annotated.tsv.gz`.
+`coordinate_qc.tsv` records the resolved fraction, and the rule fails if more
+than `graph_screen.max_unresolved_coordinate_fraction` of >=50 bp candidates
+lack a graph segment and offset.
+
 Summarize callability and evidence tiers:
 
 ```bash
@@ -510,6 +552,13 @@ print("candidate_tiers", Counter(row["confidence_tier"] for row in candidates))
 print("candidate_types", Counter(row["svtype"] for row in candidates))
 PY
 ```
+
+This inline Python check loads the per-assembly graph-screen summary as TSV and
+the residual-candidate table through `gzip.open` because it is compressed. For
+each assembly it compares the primary and sensitivity callable fractions and
+uses the larger value as the effective callable fraction. The printed counters
+show how many assemblies remain below the configured callability threshold and
+how graph residual candidates are distributed by confidence tier and SV type.
 
 A clean end-to-end alignment with no residual event supports graph
 representability only in callable sequence. A no-call in repetitive,
@@ -565,12 +614,12 @@ reference_calls/hg38/reference.mmi
 reference_calls/reference_call_manifest.tsv
 ```
 
-CHM13, GRCh38, and unprojected graph coordinates remain explicitly separate.
-The current merger does not liftover GRCh38 calls to CHM13, so events in those
-two coordinate systems are not deduplicated across references. Do not sum rows
-or `independent_sample_count` across coordinate systems as if they were distinct
-biological alleles. This provisional table does not report allele frequencies;
-those require a reconciled, genotyped catalog in one coordinate system.
+CHM13, GRCh38, and graph coordinates remain explicitly separate. Reference
+calls are normalized evidence, but they cannot create catalog events by
+themselves. CHM13 calls may validate a coordinate-compatible graph residual;
+GRCh38 calls remain provenance evidence until an explicit liftover/reconciliation
+step is added. This provisional table does not report allele frequencies; those
+require a reconciled, genotyped catalog in one coordinate system.
 
 With the default `autosomes_only` mode, the raw caller VCFs still contain their
 X/Y records but known X/Y records are filtered from the merged catalog.
@@ -585,6 +634,11 @@ hard-masking pass workflow validation.
 The merger normalizes graph residuals and enabled reference-caller VCFs into a
 common evidence table, sorts them through a temporary SQLite database, and
 clusters only compatible records in the same coordinate system and chromosome.
+It emits a catalog row only when a nonmember assembly has graph-residual
+evidence. Reference-only clusters and graph-member-only self-alignment
+residuals are omitted. A graph-member residual overlapping a nonmember cluster
+is retained as control evidence and forces review rather than increasing
+confidence.
 The default cluster criteria are:
 
 - same SV type;
@@ -611,8 +665,8 @@ snakemake \
 The outputs are:
 
 ```text
-catalog/provisional_per_coordinate_frame_assembly_sv_catalog.tsv
-catalog/all_assembly_evidence.tsv.gz
+catalog/provisional_graph_residual_sv_catalog.tsv
+catalog/all_normalized_assembly_evidence.tsv.gz
 ```
 
 Inspect confidence, validation state, method support, and coordinate systems:
@@ -623,7 +677,7 @@ import csv
 from collections import Counter
 from pathlib import Path
 
-path = Path("whole_pangenome/sv_pangenome/novel_sv_discovery/catalog/provisional_per_coordinate_frame_assembly_sv_catalog.tsv")
+path = Path("whole_pangenome/sv_pangenome/novel_sv_discovery/catalog/provisional_graph_residual_sv_catalog.tsv")
 with path.open() as handle:
     rows = list(csv.DictReader(handle, delimiter="\t"))
 
@@ -639,18 +693,28 @@ for field in (
 PY
 ```
 
-`CANDIDATE_MISSING_ALLELE` is a discovery label, not proof that an event is
-biologically valid or absent from all graph paths. `HIGH` catalog confidence
-requires high-quality evidence plus either multiple methods/callers or support
-from at least two samples. Single-method candidates from poor assemblies may be
-marked `PENDING_HIFI`.
+This final inline Python summary reads the provisional catalog as a
+tab-separated table and prints value counts for the fields that drive review:
+coordinate frame, sex-chromosome handling, SV type, confidence, validation
+state, and graph-representation status. It is intended to expose obvious
+catalog-shape problems, such as unexpected coordinate systems or a large shift
+into low-confidence or unresolved graph-origin categories, before the catalog is
+used for HiFi prioritization.
+
+`RESIDUAL_TO_FROZEN_GRAPH` is a screening result, not proof that an event is
+biologically valid. `HIGH` confidence requires high-quality nonmember graph
+evidence plus either a compatible passing linear call or support from at least
+two nonmember samples. Candidates supported only by fragmented or
+`not_recommended` assemblies remain `PENDING_HIFI`; graph-member control overlap
+is labelled `GRAPH_MEMBER_CONTROL_OVERLAP` and remains uncertain.
 
 ## 13. Rank samples for HiFi retrieval
 
 The final first-pass step combines assembly QC, graph callability, candidate
-types, confidence, validation state, and current read-access metadata. It ranks
-samples for discovery blind spots, candidate validation, genotyping/phasing,
-and a small deterministic control set.
+types, confidence, validation state, and current read-access metadata. It keeps
+all discovery blind spots, selects at most `hifi_recommendations.validation_count`
+additional validation samples, and reserves
+`hifi_recommendations.control_count` callable graph-member controls.
 
 ```bash
 snakemake \
@@ -742,9 +806,11 @@ reviewed:
 frozen_graph/graph_inventory.tsv
 manifest/assembly_discovery_manifest.tsv
 graph_screen/summary/all_residual_sv_candidates.tsv.gz
+graph_screen/coordinate_qc/all_residual_sv_candidates.annotated.tsv.gz
+graph_screen/coordinate_qc/coordinate_qc.tsv
 reference_calls/reference_call_manifest.tsv
-catalog/provisional_per_coordinate_frame_assembly_sv_catalog.tsv
-catalog/all_assembly_evidence.tsv.gz
+catalog/provisional_graph_residual_sv_catalog.tsv
+catalog/all_normalized_assembly_evidence.tsv.gz
 hifi/recommended_hifi_samples.tsv
 ```
 

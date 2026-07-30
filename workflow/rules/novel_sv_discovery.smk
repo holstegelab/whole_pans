@@ -122,14 +122,16 @@ NOVEL_PROVISIONAL_HIFI = f"{NOVEL_OUTDIR}/hifi/provisional_hifi_samples.tsv"
 NOVEL_GRAPH_SEGMENTS = f"{NOVEL_OUTDIR}/frozen_graph/graph_segments.tsv.gz"
 NOVEL_GRAPH_TASKS = f"{NOVEL_OUTDIR}/graph_screen/tasks.tsv"
 NOVEL_GRAPH_SUMMARY = f"{NOVEL_OUTDIR}/graph_screen/summary/all_assembly_novel_sv_summary.tsv"
-NOVEL_GRAPH_CANDIDATES = f"{NOVEL_OUTDIR}/graph_screen/summary/all_residual_sv_candidates.tsv.gz"
+NOVEL_GRAPH_CANDIDATES_RAW = f"{NOVEL_OUTDIR}/graph_screen/summary/all_residual_sv_candidates.tsv.gz"
+NOVEL_GRAPH_CANDIDATES = f"{NOVEL_OUTDIR}/graph_screen/coordinate_qc/all_residual_sv_candidates.annotated.tsv.gz"
+NOVEL_GRAPH_COORDINATE_QC = f"{NOVEL_OUTDIR}/graph_screen/coordinate_qc/coordinate_qc.tsv"
 NOVEL_GRAPH_COMPLEX = f"{NOVEL_OUTDIR}/graph_screen/summary/all_complex_alignments.tsv.gz"
 NOVEL_GRAPH_ALIGNMENTS = f"{NOVEL_OUTDIR}/graph_screen/summary/all_contig_alignments.tsv.gz"
 NOVEL_CALL_MANIFEST = f"{NOVEL_OUTDIR}/reference_calls/reference_call_manifest.tsv"
 NOVEL_CATALOG = (
-    f"{NOVEL_OUTDIR}/catalog/provisional_per_coordinate_frame_assembly_sv_catalog.tsv"
+    f"{NOVEL_OUTDIR}/catalog/provisional_graph_residual_sv_catalog.tsv"
 )
-NOVEL_EVIDENCE = f"{NOVEL_OUTDIR}/catalog/all_assembly_evidence.tsv.gz"
+NOVEL_EVIDENCE = f"{NOVEL_OUTDIR}/catalog/all_normalized_assembly_evidence.tsv.gz"
 NOVEL_RECOMMENDED_HIFI = f"{NOVEL_OUTDIR}/hifi/recommended_hifi_samples.tsv"
 NOVEL_TOOL_VERSIONS = f"{NOVEL_OUTDIR}/provenance/discovery_tool_versions.tsv"
 
@@ -193,6 +195,21 @@ NOVEL_UNPAIRED_SAMPLES = sorted(set(NOVEL_SAMPLE_HAPS) - set(NOVEL_PAIRED_SAMPLE
 NOVEL_BATCH_SIZE = int(NOVEL_SCREEN.get("batch_size", 1))
 if NOVEL_BATCH_SIZE < 1:
     raise WorkflowError("novel_sv_discovery.graph_screen.batch_size must be at least 1")
+NOVEL_MAX_UNRESOLVED_COORDINATE_FRACTION = float(
+    NOVEL_SCREEN.get("max_unresolved_coordinate_fraction", 0.01)
+)
+if not 0 <= NOVEL_MAX_UNRESOLVED_COORDINATE_FRACTION <= 1:
+    raise WorkflowError(
+        "novel_sv_discovery.graph_screen.max_unresolved_coordinate_fraction "
+        "must be between 0 and 1"
+    )
+NOVEL_HIFI_VALIDATION_COUNT = int(NOVEL_HIFI.get("validation_count", 50))
+NOVEL_HIFI_CONTROL_COUNT = int(NOVEL_HIFI.get("control_count", 20))
+if NOVEL_HIFI_VALIDATION_COUNT < 0 or NOVEL_HIFI_CONTROL_COUNT < 0:
+    raise WorkflowError(
+        "novel_sv_discovery.hifi_recommendations validation/control counts "
+        "must be non-negative"
+    )
 
 NOVEL_SVIM_ENABLED = bool(NOVEL_CALLERS.get("svim_asm", True))
 NOVEL_DIPCALL_ENABLED = bool(NOVEL_CALLERS.get("dipcall", True))
@@ -455,6 +472,7 @@ rule novel_sv_discovery:
         refreshed_feasibility=NOVEL_REFRESHED_FEASIBILITY,
         graph_summary=NOVEL_GRAPH_SUMMARY,
         graph_candidates=NOVEL_GRAPH_CANDIDATES,
+        graph_coordinate_qc=NOVEL_GRAPH_COORDINATE_QC,
         graph_complex=NOVEL_GRAPH_COMPLEX,
         graph_alignments=NOVEL_GRAPH_ALIGNMENTS,
         call_manifest=NOVEL_CALL_MANIFEST,
@@ -552,6 +570,7 @@ rule inventory_frozen_graph_for_novel_sv:
 
 rule record_novel_sv_tool_versions:
     input:
+        graph_versions=f"{NOVEL_OUTDIR}/frozen_graph/tool_versions.tsv",
         graph_env=NOVEL_GRAPH_ENV,
         reference_env=NOVEL_REFERENCE_ENV,
         catalog_env=NOVEL_CATALOG_ENV,
@@ -575,11 +594,12 @@ rule record_novel_sv_tool_versions:
         set -euo pipefail
         mkdir -p "$(dirname {output:q})" "$(dirname {log:q})"
         {{
-          printf 'tool\tversion\texecutable\texecutable_sha256\n'
-          for tool in minigraph gfatools minimap2 samtools bcftools tabix svim-asm run-dipcall snakemake; do
+          printf 'tool\tversion\texecutable\texecutable_sha256\tprovenance_source\n'
+          awk -F '\t' 'NR > 1 {{printf "%s\t%s\t\t\tgraph_screen_environment\n", $1, $2}}' {input.graph_versions:q}
+          for tool in minimap2 samtools bcftools tabix svim-asm run-dipcall; do
             executable=$(command -v "$tool" || true)
             if [ -z "$executable" ]; then
-              printf '%s\tunavailable\t\t\n' "$tool"
+              printf '%s\tunavailable\t\t\treference_calling_environment\n' "$tool"
               continue
             fi
             case "$tool" in
@@ -590,14 +610,14 @@ rule record_novel_sv_tool_versions:
             [ -n "$version" ] || version='version flag unavailable'
             checksum=$(sha256sum "$executable" | awk '{{print $1}}')
             version=${{version//$'\t'/ }}
-            printf '%s\t%s\t%s\t%s\n' "$tool" "$version" "$executable" "$checksum"
+            printf '%s\t%s\t%s\t%s\treference_calling_environment\n' "$tool" "$version" "$executable" "$checksum"
           done
           for environment in {input.graph_env:q} {input.reference_env:q} {input.catalog_env:q} {input.pav_env:q}; do
-            printf 'conda_environment\tsha256:%s\t%s\t\n' \
+            printf 'conda_environment\tsha256:%s\t%s\t\tenvironment_spec\n' \
               "$(sha256sum "$environment" | awk '{{print $1}}')" "$environment"
           done
           if [ {params.pav_enabled:q} = true ]; then
-            printf 'pav_snakefile\tsha256:%s\t%s\t\n' \
+            printf 'pav_snakefile\tsha256:%s\t%s\t\tpav_source\n' \
               "$(sha256sum {params.pav_snakefile:q} | awk '{{print $1}}')" {params.pav_snakefile:q}
           fi
         }} > {output:q} 2> {log:q}
@@ -727,7 +747,8 @@ rule screen_assembly_against_frozen_graph:
         min_alignment=int(NOVEL_SCREEN.get("min_alignment", 5000)),
         min_anchor=int(NOVEL_SCREEN.get("min_anchor", 2000)),
         min_mapq=int(NOVEL_SCREEN.get("min_mapq", 5)),
-        min_identity=float(NOVEL_SCREEN.get("min_identity", 0.90))
+        min_identity=float(NOVEL_SCREEN.get("min_identity", 0.90)),
+        max_unresolved_coordinates=NOVEL_MAX_UNRESOLVED_COORDINATE_FRACTION
     log:
         f"{NOVEL_OUTDIR}/graph_screen/task_logs/{{task}}.log"
     benchmark:
@@ -764,7 +785,8 @@ rule screen_assembly_against_frozen_graph:
           --min-alignment {params.min_alignment} \
           --min-anchor {params.min_anchor} \
           --min-mapq {params.min_mapq} \
-          --min-identity {params.min_identity} > {log:q} 2>&1
+          --min-identity {params.min_identity} \
+          --max-unresolved-coordinate-fraction {params.max_unresolved_coordinates} > {log:q} 2>&1
         test -s {output:q}/.complete
         test -s {output:q}/task_outputs.tsv
         """
@@ -777,7 +799,7 @@ rule summarize_novel_sv_graph_screen:
         task_dirs=novel_graph_task_directories
     output:
         summary=NOVEL_GRAPH_SUMMARY,
-        candidates=NOVEL_GRAPH_CANDIDATES,
+        candidates=NOVEL_GRAPH_CANDIDATES_RAW,
         complex=NOVEL_GRAPH_COMPLEX,
         alignments=NOVEL_GRAPH_ALIGNMENTS
     params:
@@ -803,6 +825,41 @@ rule summarize_novel_sv_graph_screen:
           {params.task_dir_args} \
           --output-dir {params.output_dir:q} > {log:q} 2>&1
         test -s {output.summary:q}
+        """
+
+
+rule reannotate_novel_sv_graph_coordinates:
+    input:
+        candidates=NOVEL_GRAPH_CANDIDATES_RAW,
+        segment_index=NOVEL_GRAPH_SEGMENTS
+    output:
+        candidates=NOVEL_GRAPH_CANDIDATES,
+        qc=NOVEL_GRAPH_COORDINATE_QC
+    params:
+        script=NOVEL_SCREEN_SCRIPT,
+        min_sv=int(NOVEL_SCREEN.get("min_sv_size", 50)),
+        max_unresolved=NOVEL_MAX_UNRESOLVED_COORDINATE_FRACTION
+    log:
+        f"{NOVEL_OUTDIR}/logs/reannotate_graph_coordinates.log"
+    conda:
+        NOVEL_GRAPH_ENV
+    threads: 1
+    resources:
+        mem_mb=8000,
+        runtime=240
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p "$(dirname {output.candidates:q})" "$(dirname {log:q})"
+        python {params.script:q} reannotate \
+          --candidates {input.candidates:q} \
+          --segment-index {input.segment_index:q} \
+          --output {output.candidates:q} \
+          --qc-output {output.qc:q} \
+          --min-sv-size {params.min_sv} \
+          --max-unresolved-coordinate-fraction {params.max_unresolved} > {log:q} 2>&1
+        test -s {output.candidates:q}
+        test -s {output.qc:q}
         """
 
 
@@ -1150,14 +1207,14 @@ rule rank_recommended_hifi_samples:
     input:
         manifest=NOVEL_DISCOVERY_MANIFEST,
         screen=NOVEL_GRAPH_SUMMARY,
-        catalog=NOVEL_CATALOG,
-        evidence=NOVEL_EVIDENCE
+        catalog=NOVEL_CATALOG
     output:
         NOVEL_RECOMMENDED_HIFI
     params:
         script=NOVEL_HIFI_SCRIPT,
         callable_threshold=float(NOVEL_HIFI.get("callable_threshold", 0.85)),
-        controls=int(NOVEL_HIFI.get("control_count", 20))
+        validation=NOVEL_HIFI_VALIDATION_COUNT,
+        controls=NOVEL_HIFI_CONTROL_COUNT
     log:
         f"{NOVEL_OUTDIR}/logs/rank_recommended_hifi.log"
     conda:
@@ -1173,8 +1230,8 @@ rule rank_recommended_hifi_samples:
           --assembly-manifest {input.manifest:q} \
           --screen-summary {input.screen:q} \
           --catalog {input.catalog:q} \
-          --evidence {input.evidence:q} \
           --callable-threshold {params.callable_threshold} \
+          --validation-count {params.validation} \
           --control-count {params.controls} \
           --output {output:q} > {log:q} 2>&1
         test -s {output:q}

@@ -3,6 +3,8 @@
 import csv
 import gzip
 import importlib.util
+import io
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -84,6 +86,51 @@ class GraphIndexTests(unittest.TestCase):
         self.assertEqual(reverse["offset"], 39)
         self.assertEqual(reverse["stable_position"], 2039)
 
+    def test_path_projection_accepts_minigraph_stable_interval_labels(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = Path(tmpdir) / "segments.tsv"
+            index.write_text(
+                "segment_id\tlength\tsn\tso\tsr\n"
+                "s1\t100\tchr1\t1000\t0\n"
+                "s2\t50\tdonor.ctg\t2000\t2\n"
+            )
+            segments = SCREEN.load_segment_index(index)
+
+            forward = SCREEN.locate_graph_position(
+                ">chr1:1000-1100>donor.ctg:2000-2050", 25, segments
+            )
+            reverse = SCREEN.locate_graph_position(
+                ">chr1:1000-1100<donor.ctg:2000-2050", 110, segments
+            )
+
+            self.assertEqual(forward["segment"], "chr1:1000-1100")
+            self.assertEqual(forward["stable_position"], 1025)
+            self.assertEqual(forward["sr"], 0)
+            self.assertEqual(reverse["stable_position"], 2039)
+            self.assertEqual(reverse["sr"], 2)
+
+    def test_path_projection_accepts_bare_rank_zero_stable_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = Path(tmpdir) / "segments.tsv"
+            index.write_text(
+                "segment_id\tlength\tsn\tso\tsr\n"
+                "s1\t50\tchr5\t0\t0\n"
+                "s2\t50\tchr5\t50\t0\n"
+                "s3\t100\tchr5\t200\t1\n"
+            )
+            segments = SCREEN.load_segment_index(index)
+
+            location = SCREEN.locate_graph_position("chr5", 75, segments)
+
+            self.assertEqual(location["segment"], "chr5")
+            self.assertEqual(location["offset"], 75)
+            self.assertEqual(location["stable_position"], 75)
+            self.assertEqual(location["sr"], 0)
+            self.assertEqual(
+                SCREEN.locate_graph_position("chr5", 125, segments),
+                SCREEN.empty_graph_location(),
+            )
+
 
 class CigarTests(unittest.TestCase):
     def test_internal_insertion_has_two_sided_anchors(self):
@@ -162,6 +209,41 @@ class SplitAlignmentTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["classification"], "POTENTIAL_INVERSION_OR_TRANSLOCATION")
         self.assertIn("inconsistent orientation", rows[0]["notes"])
+
+
+class MinigraphTests(unittest.TestCase):
+    def test_run_minigraph_streams_stdout_through_gzip_writer(self):
+        gaf = (
+            b"contig1\t6000\t0\t6000\t+\t>s1\t10000\t0\t6000\t"
+            b"6000\t6000\t60\ttp:A:P\tcg:Z:6000M\n"
+        )
+        process = mock.MagicMock()
+        process.stdout = io.BytesIO(gaf)
+        process.returncode = 0
+        process.__enter__.return_value = process
+        process.__exit__.return_value = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            output = tmp / "alignment.gaf.gz"
+            log = tmp / "minigraph.log"
+
+            with mock.patch.object(SCREEN.subprocess, "Popen", return_value=process) as popen:
+                SCREEN.run_minigraph(
+                    "graph.gfa",
+                    "assembly.fa",
+                    output,
+                    log,
+                    threads=4,
+                    min_chain_score=5000,
+                    secondary=5,
+                    extra="",
+                )
+
+            self.assertEqual(output.read_bytes()[:2], b"\x1f\x8b")
+            with gzip.open(output, "rb") as handle:
+                self.assertEqual(handle.read(), gaf)
+            self.assertIs(popen.call_args.kwargs["stdout"], subprocess.PIPE)
 
 
 class TaskTests(unittest.TestCase):
@@ -251,6 +333,113 @@ class TaskTests(unittest.TestCase):
             self.assertTrue(
                 (output / "candidates" / "sample.hifi.hifiasm.bp.hap1.p_ctg.residual_svs.tsv.gz").is_file()
             )
+
+
+class ConcatenateTablesTests(unittest.TestCase):
+    def test_streams_fields_larger_than_csv_limit(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            first = tmp / "first.tsv.gz"
+            second = tmp / "second.tsv.gz"
+            output = tmp / "combined.tsv.gz"
+            large_cigar = "1M" * 200_000
+
+            with gzip.open(first, "wt") as handle:
+                handle.write("query_name\tcigar\n")
+                handle.write(f"contig1\t{large_cigar}\n")
+            with gzip.open(second, "wt") as handle:
+                handle.write("query_name\tcigar\n")
+                handle.write("contig2\t100M\n")
+
+            SCREEN.concatenate_tables(
+                [first, second], output, ["query_name", "cigar"]
+            )
+
+            with gzip.open(output, "rt") as handle:
+                self.assertEqual(handle.readline(), "query_name\tcigar\n")
+                self.assertEqual(handle.readline(), f"contig1\t{large_cigar}\n")
+                self.assertEqual(handle.readline(), "contig2\t100M\n")
+                self.assertEqual(handle.read(), "")
+
+    def test_rejects_an_unexpected_header(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source = tmp / "source.tsv"
+            output = tmp / "combined.tsv"
+            source.write_text("query_name\twrong_column\ncontig1\t100M\n")
+
+            with self.assertRaisesRegex(ValueError, "Unexpected columns"):
+                SCREEN.concatenate_tables(
+                    [source], output, ["query_name", "cigar"]
+                )
+
+
+class ReannotateCandidateTests(unittest.TestCase):
+    def candidate_table(self, path, graph_path):
+        row = {field: "" for field in SCREEN.EVENT_FIELDS}
+        row.update(
+            {
+                "event_id": "GSV_1",
+                "assembly_id": "sample.hifi.hifiasm.bp.hap1.p_ctg",
+                "sample_id": "sample",
+                "haplotype": "hap1",
+                "graph_member": "false",
+                "graph_path": graph_path,
+                "path_position_0": "25",
+                "svtype": "INS",
+                "svlen": "60",
+                "event_size_bp": "60",
+                "confidence_tier": "HIGH_CONFIDENCE",
+            }
+        )
+        SCREEN.write_tsv(path, [row], SCREEN.EVENT_FIELDS)
+
+    def test_reannotates_saved_candidates_and_writes_qc(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            index = tmp / "segments.tsv"
+            index.write_text(
+                "segment_id\tlength\tsn\tso\tsr\n"
+                "s1\t100\tchr1\t1000\t0\n"
+            )
+            source = tmp / "source.tsv.gz"
+            output = tmp / "annotated.tsv.gz"
+            qc = tmp / "qc.tsv"
+            self.candidate_table(source, ">chr1:1000-1100")
+
+            SCREEN.reannotate_candidates(source, index, output, qc)
+
+            with gzip.open(output, "rt") as handle:
+                row = next(csv.DictReader(handle, delimiter="\t"))
+            self.assertEqual(row["graph_segment"], "chr1:1000-1100")
+            self.assertEqual(row["stable_source"], "chr1")
+            self.assertEqual(row["stable_position_0"], "1025")
+            self.assertEqual(row["source_rank"], "0")
+            self.assertIn("status\tPASS", qc.read_text())
+
+    def test_rejects_excess_unresolved_coordinates(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            index = tmp / "segments.tsv"
+            index.write_text(
+                "segment_id\tlength\tsn\tso\tsr\n"
+                "s1\t100\tchr1\t1000\t0\n"
+            )
+            source = tmp / "source.tsv.gz"
+            output = tmp / "annotated.tsv.gz"
+            qc = tmp / "qc.tsv"
+            self.candidate_table(source, ">unknown_path")
+
+            with self.assertRaisesRegex(ValueError, "Unresolved graph coordinates"):
+                SCREEN.reannotate_candidates(
+                    source,
+                    index,
+                    output,
+                    qc,
+                    max_unresolved_fraction=0.0,
+                )
+            self.assertFalse(output.exists())
+            self.assertIn("status\tFAIL", qc.read_text())
 
 
 if __name__ == "__main__":

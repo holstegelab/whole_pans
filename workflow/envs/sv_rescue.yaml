@@ -1,9 +1,10 @@
-name: whole-pans-sv-graph
+name: whole-pans-sv-rescue
 channels:
   - conda-forge
   - bioconda
   - nodefaults
 dependencies:
   - python=3.10
-  - minigraph=0.21
-  - gfatools=0.5
+  - hifiasm
+  - minimap2
+  - samtools

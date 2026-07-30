@@ -451,13 +451,15 @@ The main first-pass outputs are:
   and per-assembly decisions;
 - `graph_screen/summary/all_residual_sv_candidates.tsv.gz`: raw, review, and
   high-confidence graph-residual evidence;
+- `graph_screen/coordinate_qc/all_residual_sv_candidates.annotated.tsv.gz`:
+  stable-coordinate repair of saved Minigraph residuals, accompanied by a
+  fail-fast `coordinate_qc.tsv` report;
 - `reference_calls/reference_call_manifest.tsv`: traceable PAV, SVIM-asm, and
   dipcall outputs for paired samples against CHM13 and hg38, according to
   enabled callers;
-- `catalog/provisional_per_coordinate_frame_assembly_sv_catalog.tsv`:
-  assembly-only clustered alleles, deliberately not deduplicated between
-  CHM13, hg38, and unprojected graph coordinates, with `PENDING_HIFI` retained
-  where read evidence is still needed;
+- `catalog/provisional_graph_residual_sv_catalog.tsv`: nonmember graph-residual
+  clusters only; compatible CHM13 calls are validation evidence, while
+  reference-only and graph-member-only clusters do not create catalog rows;
 - `hifi/recommended_hifi_samples.tsv`: one ranked row per recommended sample,
   including poorly callable samples with zero assembly candidates.
 
