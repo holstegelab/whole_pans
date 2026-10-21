@@ -37,7 +37,11 @@ samtools fastq -@ 16 sample.hifi.bam |
   bgzip -@ 16 > sample.hifi.fastq.gz
 ```
 
-The assembly FASTA files must already have `samtools faidx` indexes:
+Indexed FASTA files are sliced with `samtools faidx`. The cleaned assemblies
+currently produced by this project are ordinary gzip files, which cannot be
+random-accessed by `faidx`; the rescue helper detects that case and streams the
+needed contig interval instead. For uncompressed or BGZF FASTA files, an
+optional index avoids that sequential scan:
 
 ```bash
 samtools faidx /path/to/assembly.clean.fa.gz
@@ -105,6 +109,7 @@ python workflow/scripts/build_clean_sv_rescues.py run \
   --plan "$RESCUE_ROOT/plan.tsv" \
   --rescue-id PSV_example \
   --output-dir "$RESCUE_ROOT/results" \
+  --scratch-dir "${TMPDIR:-/tmp}" \
   --threads 16
 ```
 
@@ -126,6 +131,7 @@ while read -r rescue_id; do
     --plan "$RESCUE_ROOT/plan.tsv" \
     --rescue-id "$rescue_id" \
     --output-dir "$RESCUE_ROOT/results" \
+    --scratch-dir "${TMPDIR:-/tmp}" \
     --threads 16
 done
 ```
@@ -137,11 +143,15 @@ scheduler-specific settings.
 Each result directory contains:
 
 - `seed.fa`: the source assembly interval, normally with 50 kb flanks;
-- `reads_to_seed.paf` and `selected_reads.fa.gz`: recruitment evidence;
+- `reads_to_seed.paf`: recruitment evidence, including selected read names;
 - `local_contigs.fa` and `local_contigs_to_seed.paf`: local assembly evidence;
 - `candidate_rescue.fa`: best two-sided local contig, even if final QC fails;
 - `clean_rescue.fa`: written only for a `PASS`;
 - `qc.tsv`, `run_status.json`, tool versions, and logs.
+
+The selected-read FASTA and raw hifiasm files are temporary. They are created
+under `--scratch-dir` (otherwise `${TMPDIR:-/tmp}`) and removed on `PASS`,
+`FAIL`, or `ERROR`; they are not retained in the result directory.
 
 If read support is insufficient or no two-sided local contig is recovered,
 `qc.tsv` records `FAIL` and no candidate FASTA may be present. Tool or malformed

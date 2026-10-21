@@ -1,0 +1,8 @@
+name: whole-pans-review-followup
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.12
+  - minimap2=2.28

@@ -1,0 +1,10 @@
+name: flat-reference-comparison
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.12
+  - dragmap=1.3.0
+  - samtools
+  - pysam

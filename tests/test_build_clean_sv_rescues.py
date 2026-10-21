@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import csv
+import gzip
 import importlib.util
 import tempfile
 import unittest
@@ -212,6 +213,35 @@ class RescuePlanningTests(unittest.TestCase):
             self.assertEqual(row["hifi_read_paths"], "/reads/sample.hifi.fastq.gz")
 
 class RescueSequenceTests(unittest.TestCase):
+    def test_seed_extraction_streams_plain_gzip_when_faidx_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            assembly = tmp / "assembly.fa.gz"
+            output = tmp / "seed.fa"
+            log = tmp / "seed.log"
+            with gzip.open(assembly, "wt") as handle:
+                handle.write(
+                    ">other\nAAAA\n"
+                    ">target description\nACGTAC\nGTACGT\n"
+                    ">later\nCCCC\n"
+                )
+
+            sequence = RESCUE.extract_seed(
+                {
+                    "assembly_path": str(assembly),
+                    "query_name": "target",
+                    "seed_start_0": "3",
+                    "seed_end_0": "10",
+                },
+                samtools="not-used-without-an-index",
+                output=output,
+                log=log,
+            )
+
+            self.assertEqual(sequence, "TACGTAC")
+            self.assertEqual(RESCUE.parse_fasta(output), {"seed": "TACGTAC"})
+            self.assertIn("streaming", log.read_text())
+
     def test_fastq_read_extraction_and_reverse_complement(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

@@ -1,0 +1,5 @@
+channels:
+  - conda-forge
+dependencies:
+  - r-base>=4.4
+  - r-logistf=1.26.1

@@ -1,0 +1,9 @@
+name: whole-pans-read-graph-benchmark-vg
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.12
+  - vg=1.76.1
+  - pyyaml

@@ -1,0 +1,128 @@
+# Standalone workflow; paths are relative to the server whole_pans checkout.
+# Copy the header-only examples before filling them; never edit historical inputs.
+sv_gene_phenotype:
+  results: ../whole_pangenome/sv_gene_phenotype_2026-10-20
+  inventory:
+    samples: config/svgp_samples.example.tsv
+    reads: config/svgp_reads.example.tsv
+    resources: config/svgp_resources.example.tsv
+    crosswalk: ""
+    ont_runs: config/svgp_ont_runs.tsv
+  phenotypes:
+    enabled: true
+    workbook: ../../DemenTree/Sequencing_analysisfile_version20260619.xlsx
+    sheet: Blad1
+    id_column: Sample_ID_WGS_given
+    phenotype_column: Diagnosis_svPPA  # Preserve all three source labels; primary design uses svPPA versus control.
+    crosswalk: config/svgp_phenotype_crosswalk.example.tsv
+  existing_calls:
+    crosswalk: config/svgp_existing_call_crosswalk.example.tsv
+    gcnv:
+      root: ../../dementree_runs/CNV_1_4
+      selected_callset: ""  # Choose gcnv_standard OR gcnv_wgs_autosomes after QC review.
+      reference_build: GRCh38_custom_masked_decoy
+    expansionhunter:
+      root: ../../dementree_runs/expansionhunter
+      catalog: ../../dementree_runs/expansionhunter/variant_catalog.masked_reference.json
+      loci: config/svgp_existing_repeat_loci.example.tsv
+      reference_build: GRCh38_custom_masked_decoy
+    reference_fasta: /gpfs/work3/0/qtholstg/hg38_res_v2/hg38_phix/GRCh38_masked_v2_decoy_excludes_GPRIN2_DUSP22_FANCD2_decoy_HLA_PhiX.fa
+    reference_sha256: ""  # Frozen FASTA checksum remains to be established.
+  catalogue:
+    graph: ../whole_pangenome/hprc_plus_cohort/graphs/hprc-v2.0-mc-chm13.cohort.sv.gfa
+    graph_version: hprc-v2.0-mc-chm13-plus-local-frozen
+    graph_sha256: ""  # Fill from verified graph_inventory.tsv before reconstruction.
+    build_manifest: ../whole_pangenome/hprc_plus_cohort/metadata/assembly_samples.tsv
+    examples: ../whole_pangenome/hprc_plus_cohort/sv_examples
+    bubbles: ../whole_pangenome/direct_sv_graph_comparison/sv_catalogs/hprc_plus_local.bubbles.tsv
+    first_local_source_rank: 464  # Must agree with source contig and grouped build order.
+    reference: ../refs/CHM13.fa.gz
+    flank_bp: 1000
+    source_review: ""
+    tmem_fasta: ""  # Existing sequence-verified multiallelic control queries.
+    tmem_targets: ""
+    controls: ""  # Other known controls; schema in svgp_controls.example.tsv.
+    control_fasta: ""  # control_id|REF and control_id|ALT, both with matching flanks.
+  representation:
+    review: config/svgp_representation_review.example.tsv
+    resources:
+      HPRC:
+        path: ../HPRC/graphs/hprc-v2.0-mc-chm13.sv.gfa.gz
+        version: hprc-v2.0-mc-chm13-SV-only
+        sha256: ""
+      GRCh38:
+        path: ../refs/GRCh38_primary_chr1-22_XY.fa
+        version: GRCh38-primary-chr1-22-X-Y
+        sha256: ""
+      CHM13:
+        path: ../refs/CHM13.fa.gz
+        version: ""  # Establish the actual assembly version, not just its filename.
+        sha256: ""
+  panel:
+    selection: config/svgp_panel_selection.example.tsv
+  measurement:
+    pilot_people: []  # Freeze 12-20 people by technical strata; no phenotype selection.
+    cohort_people: []
+    pilot_graphs: [hprc_only, hprc_plus_local]
+    main_graph: hprc_plus_local
+    graphs: {}  # See the guide for the verified graph/index/target bundle schema.
+    molecule_assignments: config/svgp_molecules.example.tsv
+    extraction:
+      min_mapq: null  # Select and calibrate on controls; never assume defaults are validated.
+      anchor_matches: null
+    measurement_lock: config/svgp_measurement_lock.example.tsv
+    cohort_release_review: config/svgp_cohort_release.example.tsv
+    ont:
+      people: []
+      samples: {}  # Each person: bam+bai, or fastqs+preset (map-ont or lr:hq).
+      reference: ""
+      reference_build: ""
+      known_sites_vcf: ""
+      known_sites_review: ""
+      adjudication: config/svgp_ont_adjudication.example.tsv
+    resources:
+      mapping_threads: 16
+      mapping_mem_mb: 80000
+      mapping_runtime_min: 720
+      summary_mem_mb: 8000
+      summary_runtime_min: 240
+      ont_threads: 12
+      ont_mem_mb: 48000
+      ont_runtime_min: 720
+  annotation:
+    build: CHM13
+    release: ""  # Name the frozen bundle; each feature retains its source release.
+    features: config/svgp_annotation_features.example.tsv
+    coordinate_review: config/svgp_annotation_coordinates.example.tsv
+    regulatory_links: config/svgp_regulatory_links.example.tsv
+    assessed_features: []  # Declare complete feature types only after checking coverage.
+    flank_bp: 1000
+    repeatmasker:
+      enabled: false
+      library: ""
+      library_release: ""
+      conda_env: ""  # Existing server environment; no local installation.
+      parallel_batches: 1
+  association:
+    design: config/svgp_association_design.tsv  # Confirmed contrast; DRAFT until the remaining study review is complete.
+    tests: config/svgp_association_tests.example.tsv
+    mem_mb: 8000
+    runtime_min: 120
+  prediction:
+    enabled: false
+    design: config/svgp_prediction_design.example.tsv
+    features: config/svgp_prediction_features.example.tsv
+    seeds: [20261020, 20261021, 20261022]
+    c_grid: [0.1, 1.0, 10.0]
+    bootstrap_replicates: 1000
+    threads: 4
+    mem_mb: 8000
+    runtime_min: 120
+  report:
+    dossier_alleles: []  # Choose 2-3 passing candidates by evidence, before phenotype results.
+  compute:
+    placement_threads: 8
+    placement_mem_mb: 32000
+    placement_runtime_min: 240
+    preparation_mem_mb: 8000
+    preparation_runtime_min: 240

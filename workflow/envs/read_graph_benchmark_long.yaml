@@ -1,0 +1,14 @@
+name: whole-pans-read-graph-benchmark-long
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.12
+  - minigraph
+  - minimap2
+  - seqtk
+  - samtools
+  - htslib
+  - vg=1.76.1
+  - pyyaml

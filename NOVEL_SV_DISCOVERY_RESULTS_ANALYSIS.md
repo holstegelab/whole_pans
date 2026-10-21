@@ -1,5 +1,10 @@
 # Analysis of the novel-SV discovery results
 
+Historical report: the counts and graph version below describe July 29.
+Use `../whole_pangenome_review_2026-09-15.txt` for the later inspection snapshot
+and [REVIEW_FOLLOWUP_GUIDE.md](REVIEW_FOLLOWUP_GUIDE.md) for corrected follow-up
+outputs. These historical counts have been retained unchanged.
+
 **Analysis date:** 2026-07-29  
 **Workflow:** `workflow/rules/novel_sv_discovery.smk`  
 **Results:** `../whole_pangenome/sv_pangenome/novel_sv_discovery/`
@@ -451,4 +456,3 @@ coordinate-QC table, provenance tables, and HiFi ranking were also scanned in
 full. The 7.6 GB compressed normalized-evidence archive was inspected for its
 schema and example records but was not fully decompressed for an independent
 row count; method concordance was calculated from the complete final catalog.
-

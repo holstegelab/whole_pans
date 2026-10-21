@@ -1,0 +1,8 @@
+name: whole-pans-read-graph-benchmark-python
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pyyaml
+

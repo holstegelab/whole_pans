@@ -1,6 +1,7 @@
 .snakemake/
 .workflow_test/
 .idea/
+/AGENTS.md
 results/
 logs/
 benchmarks/
@@ -9,3 +10,4 @@ __pycache__/
 *.log
 slurm-*.out
 .DS_Store
+/zslurm_logs

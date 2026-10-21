@@ -1,0 +1,32 @@
+# Immediate next phase from whole_pangenome_review_2026-09-15.txt.
+# Paths are relative to whole_pans; existing graph construction is not rerun.
+review_followup:
+  results: ../whole_pangenome/review_followup_2026-09-18
+  review: ../whole_pangenome_review_2026-09-15.txt
+  hprc_examples: ../whole_pangenome/hprc_plus_cohort/sv_examples
+  hprc_build_manifest: ../whole_pangenome/hprc_plus_cohort/metadata/assembly_samples.tsv
+  # First local SR in the reviewed graph. Every assignment is also checked
+  # against its source contig name. Change only with matching build provenance.
+  first_local_source_rank: 464
+  panel:
+    # Includes one TMEM106B locus; its multiple ALT alleles stay separate.
+    max_loci: 30
+    genic_loci: 15
+    repeat_review_loci: 4
+    flank_bp: 1000
+    # Optional TSV: candidate_id, panel_role. Roles: candidate,
+    # genic_candidate, repeat_review_control. Unknown IDs are an error.
+    # With a selection TSV, its rows replace the automatic HPRC selection.
+    selection: ""
+    # Optional BEDs MUST use CHM13 coordinates and matching contig names.
+    # Empty lists are reported as NOT_ASSESSED, never as repeat-free.
+    repeat_beds: []
+    segdup_beds: []
+  resources:
+    qc_mem_mb: 16000
+    qc_runtime_min: 360
+    preparation_mem_mb: 8000
+    preparation_runtime_min: 240
+    placement_threads: 8
+    placement_mem_mb: 32000
+    placement_runtime_min: 240

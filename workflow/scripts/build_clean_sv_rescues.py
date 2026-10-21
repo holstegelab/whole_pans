@@ -13,11 +13,13 @@ import gzip
 import hashlib
 import heapq
 import json
+import os
 import re
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -658,35 +660,91 @@ def reverse_complement(sequence):
     return sequence.translate(table)[::-1]
 
 
+def extract_fasta_interval_streaming(path, sequence_name, start, end):
+    """Extract a 0-based half-open FASTA interval without a random-access index."""
+    if start < 0 or end <= start:
+        raise ValueError(f"Invalid FASTA interval: {sequence_name}:{start}-{end}")
+
+    found = False
+    position = 0
+    chunks = []
+    with open_text(path, "rt") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if line.startswith(">"):
+                if found:
+                    break
+                fields = line[1:].strip().split()
+                if not fields:
+                    raise ValueError(f"Empty FASTA identifier at {path}:{line_number}")
+                found = fields[0] == sequence_name
+                position = 0
+                continue
+            if not found:
+                continue
+
+            sequence = "".join(line.split())
+            line_start = position
+            line_end = line_start + len(sequence)
+            if line_end > start and line_start < end:
+                slice_start = max(0, start - line_start)
+                slice_end = min(len(sequence), end - line_start)
+                chunks.append(sequence[slice_start:slice_end])
+            position = line_end
+            if position >= end:
+                break
+
+    if not found:
+        raise ValueError(f"FASTA sequence is unavailable: {sequence_name} in {path}")
+    result = "".join(chunks)
+    expected = end - start
+    if len(result) != expected:
+        raise ValueError(
+            f"FASTA interval extends beyond {sequence_name}: "
+            f"recovered {len(result)} of {expected} bp for {start}-{end}"
+        )
+    return result
+
+
 def extract_seed(plan, samtools, output, log):
     assembly = Path(plan["assembly_path"])
     if not assembly.is_file():
         raise FileNotFoundError(f"Assembly FASTA is unavailable: {assembly}")
     fai = Path(str(assembly) + ".fai")
-    if not fai.is_file():
-        raise FileNotFoundError(
-            f"Assembly FASTA index is unavailable: {fai}. Create it once "
-            f"on the execution server with: samtools faidx {assembly}"
-        )
     start = int_value(plan["seed_start_0"])
     end = int_value(plan["seed_end_0"])
-    region = f"{plan['query_name']}:{start + 1}-{end}"
-    raw = Path(output).with_suffix(".samtools.fa")
-    run_command([samtools, "faidx", str(assembly), region], raw, log)
-    sequences = parse_fasta(raw)
-    if len(sequences) != 1:
-        raise RuntimeError(
-            f"Expected one sequence from samtools faidx {region}, got "
-            f"{len(sequences)}"
+    query_name = plan["query_name"]
+
+    if fai.is_file():
+        region = f"{query_name}:{start + 1}-{end}"
+        raw = Path(output).with_suffix(".samtools.fa")
+        run_command([samtools, "faidx", str(assembly), region], raw, log)
+        sequences = parse_fasta(raw)
+        if len(sequences) != 1:
+            raise RuntimeError(
+                f"Expected one sequence from samtools faidx {region}, got "
+                f"{len(sequences)}"
+            )
+        sequence = next(iter(sequences.values()))
+        raw.unlink(missing_ok=True)
+    else:
+        sequence = extract_fasta_interval_streaming(
+            assembly,
+            query_name,
+            start,
+            end,
         )
-    sequence = next(iter(sequences.values()))
+        Path(log).write_text(
+            "No FASTA .fai was available; extracted the seed by streaming "
+            f"{assembly}\n"
+        )
+
     expected = end - start
     if len(sequence) != expected:
         raise RuntimeError(
-            f"Seed length mismatch for {region}: {len(sequence)} != {expected}"
+            f"Seed length mismatch for {query_name}:{start}-{end}: "
+            f"{len(sequence)} != {expected}"
         )
     write_fasta(output, [("seed", sequence)])
-    raw.unlink(missing_ok=True)
     return sequence
 
 
@@ -993,22 +1051,37 @@ def run_rescue(args):
             "directory so an earlier rescue is not overwritten."
         )
     result_dir.mkdir(parents=True, exist_ok=True)
-    work = result_dir / "work"
     logs = result_dir / "logs"
-    work.mkdir()
     logs.mkdir()
     status_path = result_dir / "run_status.json"
-
-    versions = {
-        "minimap2": tool_version(minimap2),
-        "samtools": tool_version(samtools),
-        "hifiasm": tool_version(hifiasm),
-    }
-    (result_dir / "tool_versions.json").write_text(
-        json.dumps(versions, indent=2, sort_keys=True) + "\n"
-    )
+    work = None
 
     try:
+        scratch_root = Path(args.scratch_dir or os.environ.get("TMPDIR") or "/tmp")
+        if not scratch_root.is_dir() or not os.access(
+            scratch_root, os.W_OK | os.X_OK
+        ):
+            raise OSError(
+                f"Scratch directory is not writable: {scratch_root}. Set "
+                "--scratch-dir or TMPDIR to node-local SSD."
+            )
+        work = Path(
+            tempfile.mkdtemp(
+                prefix=f"clean-sv-rescue.{safe_name(args.rescue_id)}.",
+                dir=scratch_root,
+            )
+        )
+        print(f"Scratch directory: {work}")
+
+        versions = {
+            "minimap2": tool_version(minimap2),
+            "samtools": tool_version(samtools),
+            "hifiasm": tool_version(hifiasm),
+        }
+        (result_dir / "tool_versions.json").write_text(
+            json.dumps(versions, indent=2, sort_keys=True) + "\n"
+        )
+
         read_paths = [Path(path) for path in split_paths(plan["hifi_read_paths"])]
         if not read_paths:
             raise ValueError("The plan row has no HiFi read paths")
@@ -1062,7 +1135,7 @@ def run_rescue(args):
                 args.max_read_event_discordance_bp,
             )
         )
-        selected_reads = result_dir / "selected_reads.fa.gz"
+        selected_reads = work / "selected_reads.fa.gz"
         selected_count = extract_selected_reads(
             read_paths,
             selected_names,
@@ -1246,6 +1319,9 @@ def run_rescue(args):
             + "\n"
         )
         raise
+    finally:
+        if work is not None and work.exists():
+            shutil.rmtree(work)
 
 
 def summarize_rescues(args):
@@ -1409,6 +1485,14 @@ def add_run_parser(subparsers):
     parser.add_argument("--plan", required=True)
     parser.add_argument("--rescue-id", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--scratch-dir",
+        help=(
+            "Directory for selected reads and hifiasm intermediates; defaults "
+            "to TMPDIR, then /tmp. The per-rescue subdirectory is deleted on "
+            "PASS, FAIL, or ERROR."
+        ),
+    )
     parser.add_argument("--threads", type=int, default=16)
     parser.add_argument("--max-secondary", type=int, default=20)
     parser.add_argument("--min-read-mapq", type=int, default=10)

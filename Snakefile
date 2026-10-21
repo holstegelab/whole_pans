@@ -16,4 +16,8 @@ rule all:
 
 include: "workflow/rules/post_decontamination_QC.smk"
 include: "workflow/rules/pangenome.smk"
+include: "workflow/rules/hprc_plus_cohort.smk"
 include: "workflow/rules/pangenome_qc.smk"
+include: "workflow/rules/review_followup.smk"
+include: "workflow/rules/minigraph_cactus.smk"
+include: "workflow/rules/minigraph_cactus_reuse.smk"

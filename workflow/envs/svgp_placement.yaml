@@ -1,0 +1,8 @@
+name: whole-pans-svgp-placement
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - minimap2=2.31
+  - minigraph=0.21

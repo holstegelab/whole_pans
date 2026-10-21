@@ -1,0 +1,407 @@
+# Standalone read-to-reference benchmark. Paths are interpreted relative to the
+# repository root unless they are absolute server paths.
+results: ../whole_pangenome/read_graph_benchmark
+
+reference_backbone: CHM13v2.0
+graph_registry:
+  - graph_id: chm13_linear
+    label: Plain T2T-CHM13 v2.0
+    comparison_scope: headline
+    graph_type: linear_fasta
+    backbone: CHM13
+    reference_version: T2T-CHM13v2.0
+    path: ../refs/CHM13.fa.gz
+    membership_manifest: ""
+    checksum: ""
+    checksum_file: ""
+    verify_checksum: false
+    mapping_capabilities: [long_reads]
+    required_for_long: true
+    experimental: false
+    qc_status: reference
+    provenance: https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_009914755.1/
+
+  - graph_id: hprc_chm13_sv
+    label: HPRC v2.0 CHM13 SV graph
+    comparison_scope: headline
+    graph_type: minigraph_rgfa
+    backbone: CHM13
+    reference_version: HPRC-v2.0-mc-chm13.sv / T2T-CHM13v2.0 backbone
+    path: /gpfs/work3/0/qtholstg/pangenome/HPRC/graphs/hprc-v2.0-mc-chm13.sv.gfa.gz
+    membership_manifest: /gpfs/work3/0/qtholstg/pangenome/HPRC/assemblies/assemblies.tsv
+    membership_format: hprc_assemblies
+    checksum: ""
+    checksum_file: ""
+    verify_checksum: false
+    mapping_capabilities: [long_reads]
+    required_for_long: true
+    experimental: false
+    qc_status: released_input
+    provenance: HPRC release-2 Minigraph-Cactus SV graph
+
+  - graph_id: local_v1
+    label: Local cohort SV graph V1 (196 haplotypes)
+    comparison_scope: headline
+    graph_type: minigraph_rgfa
+    backbone: CHM13
+    reference_version: T2T-CHM13v2.0 backbone
+    path: ../whole_pangenome/sv_pangenome/results/graphs/sv_pangenome.minigraph.gfa
+    membership_manifest: ../whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.ordered_assemblies.tsv
+    membership_format: local_v1_ordered_assemblies
+    checksum: 0e70963827a23c6152e6d88696bd6babb327797675a760d6263cfde7f2befe19
+    checksum_file: ""
+    verify_checksum: false
+    mapping_capabilities: [long_reads]
+    required_for_long: true
+    experimental: false
+    qc_status: frozen_graph
+    provenance: ../whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.graph_summary.tsv
+
+  - graph_id: local_v2
+    label: Local cohort SV graph V2 with rescued SVs (experimental)
+    comparison_scope: headline
+    graph_type: minigraph_rgfa
+    backbone: CHM13
+    reference_version: T2T-CHM13v2.0 backbone
+    path: ../whole_pangenome/sv_pangenome/local_sv_graph_v2/graphs/sv_pangenome.local.v2.rescued.minigraph.gfa
+    membership_manifest: ../whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.ordered_assemblies.tsv
+    membership_format: local_v2_union
+    rescue_manifest: ../whole_pangenome/sv_pangenome/local_sv_graph_v2/rescue/rescue_summary.tsv
+    checksum: 880fa3bb2d474678e1d6e2d4d38bc248ea0ab8a4ebc9b28857c93dd3dd427c3e
+    checksum_file: ""
+    verify_checksum: false
+    mapping_capabilities: [long_reads]
+    required_for_long: true
+    experimental: true
+    qc_status: FAIL_cohort_accounting_structural_integrity_pass
+    provenance: ../whole_pangenome/sv_pangenome/local_sv_graph_v2/metadata/sv_pangenome.local.v2.provenance.tsv
+    qc_report: ../whole_pangenome/sv_pangenome/local_sv_graph_v2/qc/report/local_sv_graph_v2_qc_report.md
+
+  - graph_id: hprc_plus_local
+    label: HPRC CHM13 SV graph plus 196 local haplotypes
+    comparison_scope: headline
+    graph_type: minigraph_rgfa
+    backbone: CHM13
+    reference_version: HPRC-v2.0-mc-chm13.sv plus local V1 assemblies
+    path: ../whole_pangenome/hprc_plus_cohort/graphs/hprc-v2.0-mc-chm13.cohort.sv.gfa
+    membership_manifest: /gpfs/work3/0/qtholstg/pangenome/HPRC/assemblies/assemblies.tsv
+    membership_format: hprc_plus_local_v1
+    local_membership_manifest: ../whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.ordered_assemblies.tsv
+    checksum: ""
+    checksum_file: ""
+    verify_checksum: false
+    mapping_capabilities: [long_reads]
+    required_for_long: true
+    experimental: true
+    qc_status: preflight_passed_membership_auditable
+    provenance: workflow/rules/hprc_plus_cohort.smk
+
+  # Regional Minigraph-Cactus graph used only for the TMEM pilot. It is not a
+  # sixth whole-genome target and is never included in headline contrasts.
+  - graph_id: tmem_regional_gbz
+    label: TMEM106B regional Minigraph-Cactus graph
+    comparison_scope: tmem_pilot
+    graph_type: gbz
+    backbone: GRCh38
+    reference_version: GRCh38 chr7:11946976-12488798 regional graph
+    path: /gpfs/work3/0/qtholstg/pangenome/TMEM_UPD/tmem_out/pangenome_cactus_pipeline.d2.gbz
+    indexes:
+      dist: ../whole_pangenome/read_graph_benchmark/tmem/indexes/vg-1.76.1/tmem_regional_gbz.dist
+      minimizer: ../whole_pangenome/read_graph_benchmark/tmem/indexes/vg-1.76.1/tmem_regional_gbz.shortread.withzip.min
+      zipcodes: ../whole_pangenome/read_graph_benchmark/tmem/indexes/vg-1.76.1/tmem_regional_gbz.shortread.zipcodes
+    membership_manifest: ""
+    checksum: ""
+    checksum_file: ""
+    verify_checksum: false
+    mapping_capabilities: [short_reads]
+    required_for_long: false
+    experimental: true
+    qc_status: regional_pilot_only
+    provenance: /gpfs/work3/0/qtholstg/pangenome/TMEM_UPD/tmem_out/pangenome_cactus_pipeline.vcf.gz
+
+samples:
+  # Deterministic local-V1 member controls. Eligible donors were restricted to
+  # the AD archive cohort and required both haplotypes in local V1 with post-QC
+  # PASS status. Ranking the 16 eligible donors by SHA-256 of the exact UTF-8
+  # string "20260806:<sample_id>" (no trailing newline) selected these two.
+  - sample_id: "19R0534"
+    data_type: hifi
+    long_read: ../whole_pangenome/sv_pangenome/local_sv_graph_v2/hifi/fastq/19R0534.hifi.fastq.gz
+    r1: ""
+    r2: ""
+    nominal_coverage: ""
+    selected_coverage: 20
+    cohort: local_ad
+    archive_cohort: ad
+    population: ""
+    sex: unknown
+    batch: ""
+    truth_assembly_hap1: ../whole_pangenome/assembly_decontamination/results/cleaned/19R0534.hifi.hifiasm.bp.hap1.p_ctg.clean.fa.gz
+    truth_assembly_hap2: ../whole_pangenome/assembly_decontamination/results/cleaned/19R0534.hifi.hifiasm.bp.hap2.p_ctg.clean.fa.gz
+    truth_callset: ""
+    callable_regions: ""
+    role: local_v1_member_control
+    include: true
+    inclusion_reason: deterministic_local_v1_member_rank_1_seed_20260806_both_haplotypes_PASS_AD_archive_cohort
+    exclusion_reason: ""
+    simulation: false
+    stage_from_archive: true
+  - sample_id: "2348252"
+    data_type: hifi
+    long_read: ../whole_pangenome/sv_pangenome/local_sv_graph_v2/hifi/fastq/2348252.hifi.fastq.gz
+    r1: ""
+    r2: ""
+    nominal_coverage: ""
+    selected_coverage: 20
+    cohort: local_ad
+    archive_cohort: ad
+    population: ""
+    sex: unknown
+    batch: ""
+    truth_assembly_hap1: ../whole_pangenome/assembly_decontamination/results/cleaned/2348252.hifi.hifiasm.bp.hap1.p_ctg.clean.fa.gz
+    truth_assembly_hap2: ../whole_pangenome/assembly_decontamination/results/cleaned/2348252.hifi.hifiasm.bp.hap2.p_ctg.clean.fa.gz
+    truth_callset: ""
+    callable_regions: ""
+    role: local_v1_member_control
+    include: true
+    inclusion_reason: deterministic_local_v1_member_rank_2_seed_20260806_both_haplotypes_PASS_AD_archive_cohort
+    exclusion_reason: ""
+    simulation: false
+    stage_from_archive: true
+
+  # These are rescue-source positive controls, never held-out observations.
+  - sample_id: "8062838"
+    data_type: hifi
+    long_read: ../whole_pangenome/sv_pangenome/local_sv_graph_v2/hifi/fastq/8062838.hifi.fastq.gz
+    r1: ""
+    r2: ""
+    nominal_coverage: ""
+    selected_coverage: 20
+    cohort: local_ad
+    archive_cohort: ad
+    population: ""
+    sex: ""
+    batch: ""
+    truth_assembly_hap1: ../whole_pangenome/assembly_decontamination/results/cleaned/8062838.hifi.hifiasm.bp.hap1.p_ctg.clean.fa.gz
+    truth_assembly_hap2: ../whole_pangenome/assembly_decontamination/results/cleaned/8062838.hifi.hifiasm.bp.hap2.p_ctg.clean.fa.gz
+    truth_callset: ../whole_pangenome/sv_pangenome/novel_sv_discovery/reference_calls/CHM13/dipcall/8062838.vcf.gz
+    callable_regions: ../whole_pangenome/sv_pangenome/novel_sv_discovery/reference_calls/CHM13/dipcall/8062838.callable.bed.gz
+    role: v2_rescue_source_control
+    include: true
+    inclusion_reason: recommended_PASS_rescue_source
+    exclusion_reason: ""
+    simulation: false
+  - sample_id: "7326950"
+    data_type: hifi
+    long_read: ../whole_pangenome/sv_pangenome/local_sv_graph_v2/hifi/fastq/7326950.hifi.fastq.gz
+    r1: ""
+    r2: ""
+    nominal_coverage: ""
+    selected_coverage: 20
+    cohort: local_ad
+    archive_cohort: ad
+    population: ""
+    sex: ""
+    batch: ""
+    truth_assembly_hap1: ../whole_pangenome/assembly_decontamination/results/cleaned/7326950.hifi.hifiasm.bp.hap1.p_ctg.clean.fa.gz
+    truth_assembly_hap2: ../whole_pangenome/assembly_decontamination/results/cleaned/7326950.hifi.hifiasm.bp.hap2.p_ctg.clean.fa.gz
+    truth_callset: ../whole_pangenome/sv_pangenome/novel_sv_discovery/reference_calls/CHM13/dipcall/7326950.vcf.gz
+    callable_regions: ../whole_pangenome/sv_pangenome/novel_sv_discovery/reference_calls/CHM13/dipcall/7326950.callable.bed.gz
+    role: v2_rescue_source_control
+    include: true
+    inclusion_reason: recommended_PASS_rescue_source
+    exclusion_reason: ""
+    simulation: false
+
+long_reads:
+  default_selected_coverage: 20
+  genome_size_bp: 3054815472
+  selection_seed: 20260806
+  minigraph_preset: lr
+  minigraph_extra: ""
+  minimap2_preset: map-hifi
+  minimap2_extra: "--secondary=yes"
+  threads: 24
+  mem_mb: 64000
+  runtime_min: 720
+  disk_mb: 20000
+  metrics_mem_mb: 8000
+  metrics_runtime_min: 120
+
+# Only samples with stage_from_archive=true are recalled. Final FASTQs share
+# the existing persistent HiFi staging directory and are never overwritten
+# when already present and up to date.
+long_read_archive_staging:
+  assembly_manifest: ../whole_pangenome/sv_pangenome/novel_sv_discovery/manifest/assembly_discovery_manifest.tsv
+  centenarian_samples: ../chc_samples_list.txt
+  header_template: ../hdr.pacbio.txt
+  archive_root: /archive/hulsmanm/pacbio_processed/project/holstegelab/Share/pacbio/data_processed/merged_data_ad_centenarians
+  archive_bam_pattern: "{archive_root}/{cohort}/{sample}/{sample}.merged.hifi.hg38.bam"
+  fastq_pattern: ../whole_pangenome/sv_pangenome/local_sv_graph_v2/hifi/fastq/{sample}.hifi.fastq.gz
+  daget: /opt/dacommands/bin/daget
+  dals: /opt/dacommands/bin/dals
+  poll_seconds: 30
+  max_wait_min: 1440
+  archive_partition: archive
+  stage_mem_mb: 100
+  stage_runtime_min: 1500
+  copy_mem_mb: 100
+  copy_runtime_min: 720
+  conversion_threads: 8
+  conversion_mem_mb: 16000
+  conversion_runtime_min: 720
+  conversion_disk_mb: 250000
+
+simulation:
+  enabled: false
+  seed: 20260807
+  coverage: 5
+  read_length_mean: 15000
+  read_length_sd: 4000
+  substitution_rate: 0.0015
+  insertion_rate: 0.0005
+  deletion_rate: 0.0005
+  empirical_profile_json: ""
+  locus_tolerance_bp: 10000
+
+v2_rescue_validation:
+  rescue_summary: ../whole_pangenome/sv_pangenome/local_sv_graph_v2/rescue/rescue_summary.tsv
+  normalized_catalog: ../whole_pangenome/sv_pangenome/novel_sv_discovery/catalog/provisional_graph_residual_sv_catalog.tsv
+  v1_graph_id: local_v1
+  v2_graph_id: local_v2
+  anchor_bp: 1000
+  max_ambiguous_fraction: 0.5
+  events:
+    - rescue_id: PSV_49dd19af3e38911c
+      sample_id: "8062838"
+      expected_svtype: INS
+      expected_svlen: 8707
+      independent_carriers: []
+      noncarrier_controls: []
+    - rescue_id: PSV_7f13e3c00c873932
+      sample_id: "8062838"
+      expected_svtype: INS
+      expected_svlen: 2895
+      independent_carriers: []
+      noncarrier_controls: []
+    - rescue_id: PSV_9ba713bbb71cd157
+      sample_id: "7326950"
+      expected_svtype: DEL
+      expected_svlen: 6555
+      independent_carriers: []
+      noncarrier_controls: []
+
+tmem_pilot:
+  graph_ids: [tmem_regional_gbz]
+  vg_version: "1.76.1"
+  random_seed: 20260808
+  random_blinded_count: 4
+  fastq_manifests:
+    - /home/gozhegov/data/DemenTree/NL_DemenTree_batch1.tsv
+    - /home/gozhegov/data/DemenTree/NL_DemenTree_batch2.tsv
+    - /home/gozhegov/data/DemenTree/NL_DemenTree_batch3.tsv
+    - /home/gozhegov/data/DemenTree/NL_DemenTree_batch4.tsv
+  manifest_columns:
+    batch: 1
+    sample: 2
+    data_type: 3
+    r1: 7
+    r2: 8
+  coverage_proxy_table: /gpfs/work3/0/qtholstg/pangenome/TMEM_UPD/shortread_19kb/results/summary/strict_junction_sample_summary.tsv
+  coverage_proxy_column: mapped_records
+  target_insertions: /gpfs/work3/0/qtholstg/pangenome/TMEM_UPD/shortread_19kb/results/graph/target_insertions.tsv
+  graph_vcf: /gpfs/work3/0/qtholstg/pangenome/TMEM_UPD/tmem_out/pangenome_cactus_pipeline.vcf.gz
+  pairs:
+    - [NL_DemenTree_batch1_2410011p01, NL_DemenTree_batch1_2410021p02]
+    - [NL_DemenTree_batch1_2410004p02, NL_DemenTree_batch1_6224]
+    - [NL_DemenTree_batch2_2410035p02, NL_DemenTree_batch2_2310037p02]
+    - [NL_DemenTree_batch3_2410022p03, NL_DemenTree_batch3_2410027p01]
+    - [NL_DemenTree_batch4_2310003p01, NL_DemenTree_batch4_2410075p02]
+    - [NL_DemenTree_batch4_2003-075, NL_DemenTree_batch4_2410036p03]
+  kmer_size: 31
+  edge_window_bp: 250
+  min_mapq: 5
+  # Locked after the prior strict screen: candidates have >=21 reads on their
+  # limiting junction, while matched controls have <=2. This pilot is a
+  # confirmation of that screen, not independent genotype truth.
+  min_junction_reads_per_side: 3
+  min_reference_reads: 3
+  threads: 24
+  mem_mb: 32000
+  runtime_min: 480
+  disk_mb: 10000
+
+# Preliminary short-read QC against the existing whole-genome SV-level rGFAs.
+# The generated GBZs contain an artificial greedy path cover; they are derived
+# experimental indexes and do not change the raw rGFA mapping capabilities above.
+sv_short_read_pilot:
+  enabled: true
+  graph_ids:
+    - hprc_chm13_sv
+    - local_v1
+    - local_v2
+    - hprc_plus_local
+  baseline_graph: hprc_chm13_sv
+  sample_roles:
+    - tmem_candidate
+    - tmem_random_blinded
+  include_matched_controls: false
+  expected_role_counts:
+    tmem_candidate: 6
+    tmem_random_blinded: 4
+    tmem_matched_control: 6
+  mode: full
+  smoke_max_pairs: 5000000
+  subsampling_seed: 20260901
+  mapper: vg_giraffe
+  index_mode: rgfa_artificial_path_cover
+  vg_version: "1.76.1"
+  min_mapq: 5
+  min_junction_reads_per_side: 3
+  retain_debug_gaf: false
+  require_smoke_before_full: true
+  smoke_min_mapped_fraction: 0.80
+
+  # Inputs used only to derive allele queries. Regional graph node IDs are not
+  # propagated into any whole-genome graph target definition.
+  regional_graph_vcf: ../TMEM_UPD/tmem_out/pangenome_cactus_pipeline.vcf.gz
+  target_insertions: ../TMEM_UPD/shortread_19kb/results/graph/target_insertions.tsv
+  regional_reference_fasta: ../TMEM_UPD/tmem.hg38.fa
+  regional_vcf_position_offset: 150000
+  target_flank_bp: 1000
+  target_min_flank_aligned_bp: 900
+  target_min_query_coverage: 0.95
+  target_min_identity: 0.90
+  target_min_mapq: 20
+  target_threads: 16
+  target_mem_mb: 64000
+  target_runtime_min: 240
+
+  threads: 24
+  mem_mb: 64000
+  runtime_min: 1440
+  disk_mb: 100000
+  index_threads: 32
+  # Source rGFAs are about 3.5-4.3 GB uncompressed locally. The larger limits
+  # leave room for GBWT/path-cover construction and node-local intermediates.
+  index_mem_mb: 256000
+  index_runtime_min: 2880
+  index_disk_mb: 500000
+  metrics_mem_mb: 4000
+  metrics_runtime_min: 120
+
+sv_catalog:
+  inputs:
+    - path: ../whole_pangenome/sv_pangenome/novel_sv_discovery/catalog/provisional_graph_residual_sv_catalog.tsv
+      format: provisional_catalog
+      source_graph: local_v1
+      discovery_method: existing_normalized_assembly_evidence
+  breakpoint_distance: 500
+  length_similarity: 0.70
+  sequence_similarity: 0.80
+
+resources:
+  metadata_mem_mb: 4000
+  metadata_runtime_min: 60
+  report_mem_mb: 8000
+  report_runtime_min: 120

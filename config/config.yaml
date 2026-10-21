@@ -22,6 +22,90 @@ references:
   CHM13: /gpfs/work3/0/qtholstg/pangenome/refs/CHM13.fa.gz
   hg38: /gpfs/work3/0/qtholstg/pangenome/refs/GRCh38_primary_chr1-22_XY.fa
 
+# Explicit staged whole-genome graph build. Use separate build IDs for pilots.
+# Stage allocations are initial Snellius estimates, to calibrate on the server.
+minigraph_cactus:
+  build_id: chm13_cleaned_snakemake_v1
+  included_list: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/assembly_qc_decontaminated/results/summary/graph_included_assemblies.txt
+  results_root: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/minigraph_cactus
+  jobstore_root: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/minigraph_cactus_jobstores
+  out_name: local_mc_chm13
+  cactus_version: '3.3.0'
+  batch_system: single_machine
+  # Toil inherits node-local TMPDIR; confirm scratch capacity on the server.
+  # Toil --maxDisk is not set; confirm scratch capacity before a full run.
+  stages:
+    minigraph:
+      threads: 64
+      mem_mb: 288000
+      disk_mb: 1000000
+      runtime_min: 2880
+      max_cores: 64
+      max_memory: 224GiB
+      mg_cores: 48
+      mg_memory: 192GiB
+    graphmap:
+      threads: 96
+      mem_mb: 288000
+      disk_mb: 1000000
+      runtime_min: 2880
+      max_cores: 96
+      max_memory: 224GiB
+      map_cores: 6
+    split:
+      threads: 32
+      mem_mb: 192000
+      disk_mb: 1000000
+      runtime_min: 1440
+      max_cores: 32
+      max_memory: 160GiB
+    align:
+      threads: 96
+      mem_mb: 1300000
+      disk_mb: 1000000
+      runtime_min: 10080
+      max_cores: 96
+      max_memory: 1TiB
+      cons_cores: 32
+      cons_memory: 256GiB
+    join:
+      threads: 96
+      mem_mb: 1300000
+      disk_mb: 1000000
+      runtime_min: 10080
+      max_cores: 96
+      max_memory: 1TiB
+      index_cores: 63
+      index_memory: 896GiB
+
+# Two independent Minigraph-Cactus builds starting from frozen SV GFAs.
+# The HPRC build uses all downloaded HPRC haplotypes plus the same local V1
+# assemblies. GFA source-name normalization changes tags only, not topology.
+minigraph_cactus_reuse:
+  results_root: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/minigraph_cactus_reuse
+  jobstore_root: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/minigraph_cactus_reuse_jobstores
+  local_manifest: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.ordered_assemblies.tsv
+  batch_system: single_machine
+  seed:
+    chunks: 16
+    threads: 8
+    mem_mb: 16000
+    disk_mb: 20000
+    runtime_min: 720
+  builds:
+    local_v1:
+      build_id: local_v1_seeded_mc_smk_v2
+      out_name: mc_local_v1
+      source_gfa: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/sv_pangenome/results/graphs/sv_pangenome.minigraph.gfa
+      chm13: /gpfs/work3/0/qtholstg/pangenome/refs/CHM13.fa.gz
+      grch38: /gpfs/work3/0/qtholstg/pangenome/refs/GRCh38_primary_chr1-22_XY.fa
+    hprc_plus_local_v1:
+      build_id: hprc_plus_local_v1_seeded_mc_smk_v2
+      out_name: mc_hprc_plus_local_v1
+      source_gfa: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/hprc_plus_cohort/graphs/hprc-v2.0-mc-chm13.cohort.sv.gfa
+      hprc_manifest: /gpfs/work3/0/qtholstg/pangenome/HPRC/assemblies/assemblies.tsv
+      hprc_downloads: /gpfs/work3/0/qtholstg/pangenome/HPRC/assemblies/downloads
+
 # SV-only Minigraph pangenome construction. Paths in this section are relative
 # to this Snakefile, so the graph stage can run from a mounted project checkout.
 pangenome:
@@ -40,14 +124,39 @@ pangenome:
   minigraph_preset: ggs
   mash_kmer_size: 21
   mash_sketch_size: 100000
-  threads: 16
-  mem_mb: 240000
+  # One minimum thin-Genoa allocation: 24 cores + 42 GiB RAM.
+  mash_partition: genoa
+  mash_threads: 24
+  mash_mem_mb: 42000
+  mash_runtime_min: 360
+  mash_disk_mb: 10000
+  # The measured Minigraph peak (~83.5 GiB) leaves almost no headroom in two
+  # 42 GiB slices. Request three memory slices and expose 48 useful threads.
+  partition: genoa
+  threads: 48
+  mem_mb: 120000
   runtime_min: 2880
+  disk_mb: 20000
+  # Used when present; most thin Genoa nodes fall back to SLURM's TMPDIR.
+  scratch_dir: /scratch-node
   analysis_mem_mb: 32000
   analysis_runtime_min: 240
   ln_sample_limit: 100000
   mash_mad_k: 3.5
   low_matching_hash_fraction: 0.90
+
+# Add the assemblies selected for the local SV graph to each HPRC v2 SV graph.
+hprc_plus_cohort:
+  results: ../whole_pangenome/hprc_plus_cohort
+  assemblies: ../whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.ordered_assemblies.tsv
+  partition: fat_genoa
+  threads: 48
+  mem_mb: 160000
+  runtime_min: 2880
+  disk_mb: 20000
+  graphs:
+    grch38: /gpfs/work3/0/qtholstg/pangenome/HPRC/graphs/hprc-v2.0-mc-grch38.sv.gfa.gz
+    chm13: /gpfs/work3/0/qtholstg/pangenome/HPRC/graphs/hprc-v2.0-mc-chm13.sv.gfa.gz
 
 # Compare sequence-resolved TMEM SV alleles with the frozen whole-genome rGFA.
 # Paths are relative to whole_pans/Snakefile and remain portable across mounts.
@@ -171,6 +280,107 @@ novel_sv_discovery:
     validation_count: 50
     control_count: 20
 
+# Incremental local SV graph v2. This is a standalone stage that consumes the
+# completed novel_sv_discovery outputs, validates selected alleles with the
+# source sample's HiFi reads, locally reassembles them, and adds only unique
+# PASS rescue sequences to the frozen local Minigraph rGFA.
+local_sv_graph_v2:
+  results: ../whole_pangenome/sv_pangenome/local_sv_graph_v2
+  frozen_graph: ../whole_pangenome/sv_pangenome/results/graphs/sv_pangenome.minigraph.gfa
+  frozen_graph_summary: ../whole_pangenome/sv_pangenome/novel_sv_discovery/frozen_graph/build_graph_summary.tsv
+  frozen_graph_inventory: ../whole_pangenome/sv_pangenome/novel_sv_discovery/frozen_graph/graph_inventory.tsv
+  frozen_graph_bubbles: ../whole_pangenome/sv_pangenome/novel_sv_discovery/frozen_graph/existing_bubbles.tsv
+  catalog: ../whole_pangenome/sv_pangenome/novel_sv_discovery/catalog/provisional_graph_residual_sv_catalog.tsv
+  catalog_evidence: ../whole_pangenome/sv_pangenome/novel_sv_discovery/catalog/all_normalized_assembly_evidence.tsv.gz
+  graph_candidates: ../whole_pangenome/sv_pangenome/novel_sv_discovery/graph_screen/coordinate_qc/all_residual_sv_candidates.annotated.tsv.gz
+  assembly_manifest: ../whole_pangenome/sv_pangenome/novel_sv_discovery/manifest/assembly_discovery_manifest.tsv
+
+  hifi_reads:
+    # Samples listed here are routed to the "centenarian" archive directory;
+    # all other discovery-manifest samples are routed to "ad".
+    centenarian_samples: ../chc_samples_list.txt
+    header_template: ../hdr.pacbio.txt
+    archive_root: /archive/hulsmanm/pacbio_processed/project/holstegelab/Share/pacbio/data_processed/merged_data_ad_centenarians
+    archive_bam_pattern: "{archive_root}/{cohort}/{sample}/{sample}.merged.hifi.hg38.bam"
+    daget: /opt/dacommands/bin/daget
+    dals: /opt/dacommands/bin/dals
+    poll_seconds: 30
+    max_wait_min: 1440
+    archive_partition: archive
+    stage_mem_mb: 100
+    stage_runtime: 1500
+    # One BAM is copied per staging job onto compute-visible project storage.
+    # The copy is a temporary Snakemake output removed after FASTQ conversion.
+    copy_mem_mb: 100
+    copy_runtime: 720
+    conversion_threads: 8
+    conversion_mem_mb: 16000
+    conversion_runtime: 720
+    # Only small header files use node-local temporary space. FASTQ staging is
+    # placed beside the final output on compute-visible project storage.
+    conversion_disk_mb: 1000
+
+  plan:
+    # Set to a reviewed one-ID-per-line file to bypass the batch filters.
+    event_ids: ""
+    confidence: UNCERTAIN
+    validation_status: PENDING_HIFI
+    require_methods: "graph_residual;assembly_dipcall;assembly_svim_asm"
+    min_independent_samples: 2
+    max_events: 100
+    source_qc_tiers: "fragmented_rescue;not_recommended"
+    breakpoint_distance: 500
+    length_similarity: 0.70
+    flank_bp: 50000
+    min_flank_bp: 20000
+    allow_contig_end: false
+    mem_mb: 16000
+    runtime: 360
+
+  rescue:
+    threads: 16
+    mem_mb: 64000
+    runtime: 720
+    # Node-local SSD for selected reads and hifiasm intermediates.
+    disk_mb: 100000
+    max_secondary: 20
+    min_read_mapq: 10
+    min_read_aligned_bp: 2000
+    read_anchor_bp: 1000
+    max_read_event_discordance_bp: 30
+    min_selected_reads: 8
+    min_source_allele_reads: 3
+    contig_anchor_bp: 10000
+    min_contig_mapq: 20
+    min_contig_identity: 0.99
+    discordance_window_bp: 500
+    max_event_discordance_bp: 20
+    min_rescue_length_bp: 20000
+    hifiasm_extra: ""
+
+  graph:
+    minigraph_preset: ggs
+    threads: 16
+    mem_mb: 240000
+    runtime: 2880
+    # Node-local SSD for the complete temporary GFA/bubble output.
+    disk_mb: 20000
+
+  qc:
+    # This stage audits the existing discovery evidence without remapping
+    # assemblies or reads and without new biological validation.
+    graph_mem_mb: 32000
+    graph_runtime: 360
+    report_mem_mb: 16000
+    report_runtime: 360
+    breakpoint_distance: 500
+    length_similarity: 0.70
+    min_allele_reads_warn: 5
+    min_allele_fraction_warn: 0.10
+    max_selected_reads_warn: 100000
+    max_local_contigs_warn: 10000
+    min_target_coverage_warn: 0.80
+
 # Kraken2 database reused from
 # /home/georgii/AlzHub/short_read_analyzing_pipeline_Snakemake/constants.py:
 # RESOURCES/kraken/pluspf_20230605. The database is server-side, so the
@@ -224,6 +434,138 @@ classification:
   # A bacterial/viral Kraken2 call removes the whole contig only when existing
   # human-reference alignments cover at most this fraction of the contig.
   remove_max_human_percent: 10.0
+
+# Direct short-read comparison of the four complete SV graphs. Run with:
+# snakemake --use-conda --cores <N> personalized_sv_comparison
+personalized_sv_comparison:
+  results: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/direct_sv_graph_comparison
+  vg_version: "1.76.1"
+  common_backbone_sample: CHM13
+
+  fastq_manifests:
+    - /gpfs/work3/0/qtholstg/DemenTree/NL_DemenTree_batch1.tsv
+    - /gpfs/work3/0/qtholstg/DemenTree/NL_DemenTree_batch2.tsv
+    - /gpfs/work3/0/qtholstg/DemenTree/NL_DemenTree_batch3.tsv
+    - /gpfs/work3/0/qtholstg/DemenTree/NL_DemenTree_batch4.tsv
+    - /gpfs/work3/0/qtholstg/DemenTree/NL_DemenTree_batch5.tsv
+  # One-based column numbers in the headerless DemenTree manifests.
+  manifest_columns:
+    batch: 1
+    sample: 2
+    read_type: 3
+    sex: 6
+    r1: 7
+    r2: 8
+  # The first four batches contain paths from the data-preparation machine;
+  # batch 5 already contains Snellius paths. Both resolve to the same directory.
+  path_translations:
+    - from: /home/gozhegov/data/DemenTree
+      to: /gpfs/work3/0/qtholstg/DemenTree
+
+  sample_groups:
+    high_insertion_probability:
+      - NL_DemenTree_batch4_2420004p01
+      - NL_DemenTree_batch3_2310038p03
+      - NL_DemenTree_batch4_2410005p01
+      - NL_DemenTree_batch1_2310028p02
+      - NL_DemenTree_batch1_2410062p02
+    lower_insertion_probability:
+      - NL_DemenTree_batch3_2410039p04
+      - NL_DemenTree_batch3_2410028p05
+      - NL_DemenTree_batch4_2410079p01
+      - NL_DemenTree_batch4_2410050p01
+      - NL_DemenTree_batch4_2310010p03
+    high_insertion_absence_probability:
+      - NL_DemenTree_batch2_2410080p01
+      - NL_DemenTree_batch2_2310037p02
+      - NL_DemenTree_batch1_2011-054
+      - NL_DemenTree_batch3_2410027p01
+      - NL_DemenTree_batch3_2310024p02
+    not_tested_on_tmem_graph:
+      - NL_DemenTree_batch5_1997-089A
+      - NL_DemenTree_batch5_1998-037A
+      - NL_DemenTree_batch5_2000-063A
+      - NL_DemenTree_batch5_2002-075
+      - NL_DemenTree_batch5_2003-027A
+
+  source_graphs:
+    hprc: /gpfs/work3/0/qtholstg/pangenome/HPRC/graphs/hprc-v2.0-mc-chm13.sv.gfa.gz
+    local_v1: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/sv_pangenome/results/graphs/sv_pangenome.minigraph.gfa
+    local_v2: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/sv_pangenome/local_sv_graph_v2/graphs/sv_pangenome.local.v2.rescued.minigraph.gfa
+    hprc_plus_local: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/hprc_plus_cohort/graphs/hprc-v2.0-mc-chm13.cohort.sv.gfa
+  graph_metadata:
+    hprc:
+      graph_type: minigraph_cactus_sv_gfa
+      reference_build: T2T-CHM13v2.0
+    local_v1:
+      graph_type: minigraph_rgfa
+      reference_build: T2T-CHM13v2.0
+    local_v2:
+      graph_type: minigraph_rgfa
+      reference_build: T2T-CHM13v2.0
+    hprc_plus_local:
+      graph_type: minigraph_rgfa
+      reference_build: T2T-CHM13v2.0
+
+  # Membership is checked before graph indexing. Local V2 is
+  # the union of the V1 assembly donors and PASS rescue-source samples.
+  membership_manifests:
+    hprc: /gpfs/work3/0/qtholstg/pangenome/HPRC/assemblies/assemblies.tsv
+    local_v1: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/sv_pangenome/results/metadata/sv_pangenome.ordered_assemblies.tsv
+    local_v2_rescues: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/sv_pangenome/local_sv_graph_v2/rescue/rescue_summary.tsv
+
+  tmem:
+    vcf: /gpfs/work3/0/qtholstg/pangenome/TMEM_UPD/tmem_out/pangenome_cactus_pipeline.vcf.gz
+    target_insertions: /gpfs/work3/0/qtholstg/pangenome/TMEM_UPD/shortread_19kb/results/graph/target_insertions.tsv
+    candidate_table: /gpfs/work3/0/qtholstg/pangenome/TMEM_UPD/shortread_19kb/results/summary/likely_19kb_insertion_candidates.tsv
+    kmer_validation: /gpfs/work3/0/qtholstg/pangenome/TMEM_UPD/shortread_19kb/results/kmer_19kb_validation/allele_specific_kmer_analysis.tsv
+    regional_reference: /gpfs/work3/0/qtholstg/pangenome/TMEM_UPD/tmem.hg38.fa
+    vcf_position_offset: 150000
+    grch38_chrom: chr7
+    grch38_region_start: 11946976
+    flank_bp: 1000
+    target_min_query_coverage: 0.95
+    target_min_identity: 0.90
+    target_min_mapq: 20
+    target_min_flank_aligned_bp: 900
+
+  evidence_thresholds:
+    min_mapq: 5
+    min_junction_reads_per_side: 3
+    min_reference_reads: 3
+  paired_permutations: 10000
+  statistics_seed: 20260902
+
+  resources:
+    inventory_mem_mb: 32000
+    inventory_runtime_min: 240
+    inventory_disk_mb: 10000
+    index_threads: 32
+    index_mem_mb: 256000
+    index_runtime_min: 2880
+    index_disk_mb: 500000
+    mapping_threads: 24
+    # Giraffe used about 54 GB per failed HPRC attempt. Leave room for peaks
+    # and prevent too many whole-genome mapping jobs sharing one node.
+    mapping_mem_mb: 96000
+    mapping_runtime_min: 1440
+    mapping_disk_mb: 150000
+    target_threads: 8
+    target_mem_mb: 32000
+    target_runtime_min: 120
+
+  # Optional flat-reference baseline for the same 20 raw FASTQ samples.
+  # The FASTAs are pangenome.references.CHM13 and pangenome.references.hg38.
+  flat_reference:
+    dragmap_version: "1.3.0"
+    index_threads: 16
+    index_mem_mb: 96000
+    index_runtime_min: 1440
+    index_disk_mb: 100000
+    mapping_threads: 24
+    mapping_mem_mb: 96000
+    mapping_runtime_min: 1440
+    mapping_disk_mb: 150000
 
 resources:
   compleasm_threads: 8

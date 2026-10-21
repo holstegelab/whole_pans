@@ -1,0 +1,40 @@
+pangenome_1kcp:
+  engine: cactus
+  cactus_version: '3.3.0'
+  cactus_max_len: 10000
+  results_root: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/pangenome_1kcp
+  # Shared scratch by default; may be changed to node-local storage once capacity is known.
+  scratch_root: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/pangenome_1kcp_scratch
+  reference_prefix: 'id=CHM13|'
+  target_prefix: 'id=_MINIGRAPH_|'
+  # Cactus full-cohort input is much larger than the reference span.
+  chunk_bp: 20000000
+  boundary_slack_bp: 1000000
+  max_reference_span_bp: 30000000
+  max_seed_bp: 120000000
+  max_interval_bp: 60000000
+  # Preserve short unaligned gaps within one consecutive visit to a chunk.
+  max_gap_bp: 1000000
+  max_chunk_input_bp: 4500000000
+  max_chunk_alignments: 50000000
+  # Full-cohort pilots must be measured before enabling full construction.
+  release_all_chunks: false
+  pilot_chunks: []
+  resources:
+    threads: 16
+    mem_mb: 300000
+    # Decimal bytes, below the outer Snakemake allocation.
+    toil_max_memory: 290000000000
+    cons_memory: 280000000000
+    time: 2880
+    disk_mb: 500000
+    prepare_mem_mb: 32000
+    prepare_time: 1440
+    prepare_disk_mb: 100000
+  builds:
+    local_1kcp_cactus_v1:
+      source: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/minigraph_cactus_reuse/local_v1_seeded_mc_smk_v2
+    hprc_local_1kcp_cactus_v1:
+      source: /gpfs/work3/0/qtholstg/pangenome/whole_pangenome/minigraph_cactus_reuse/hprc_plus_local_v1_seeded_mc_smk_v2
+      chunk_bp: 5000000
+      max_reference_span_bp: 8000000

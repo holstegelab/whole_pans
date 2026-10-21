@@ -6,6 +6,11 @@ read-only. The default target runs decontamination plus the lightweight
 post-decontamination sequence QC and produces the final assembly list for graph
 construction. The full original-assembly QC remains available as target `qc`.
 
+The September review's immediate follow-up is available as `review_followup`:
+corrected V2 QC and HPRC donor provenance, a frozen TMEM comparison, and a small
+sequence-resolved validation panel. See [REVIEW_FOLLOWUP_GUIDE.md](REVIEW_FOLLOWUP_GUIDE.md)
+for configuration, output interpretation and server commands.
+
 ## Layout
 
 ```text
@@ -465,12 +470,20 @@ The main first-pass outputs are:
 
 The catalog merger streams VCFs into a temporary SQLite database instead of
 loading the cohort union into RAM. Put `TMPDIR` on sufficiently large
-node-local scratch for this job. The read-based discovery, read genotyping,
-validated graph-v2 rebuild, and capture re-screen remain deferred second-pass
-work: they require a populated read manifest or a reviewed graph-v2 input list and
-must not be inferred while those inputs are unavailable. `minigraph --call`
-only genotypes bubbles already represented in the graph; it is not used as the
-missing-allele discovery method.
+node-local scratch for this job. The reviewed, read-validated local graph-v2
+continuation is implemented in `workflow/rules/local_sv_graph_v2.smk`; it
+stages the selected PacBio BAMs with `daget`, retains only unique passing local
+rescues, and incrementally augments the checksum-verified frozen graph. See
+`LOCAL_SV_GRAPH_V2_GUIDE.md` before launching tape requests. Broader read-based
+discovery/genotyping, HPRC-plus-local construction, and capture re-screening
+remain separate later stages. `minigraph --call` only genotypes bubbles already
+represented in the graph; it is not used as the missing-allele discovery
+method.
+
+The explicit Minigraph-Cactus reuse targets turn the frozen local V1 and
+HPRC+local V1 SV GFAs into two separate base-resolution graphs, then write a
+side-by-side descriptive comparison. See `MINIGRAPH_CACTUS_REUSE_GUIDE.md`;
+these targets run only on Snellius and are excluded from `rule all`.
 
 The separate `pangenome_qc` target analyzes an existing or newly built GFA:
 

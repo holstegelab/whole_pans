@@ -1,0 +1,3 @@
+# Chunked Cactus construction from frozen SV graphs and completed mappings.
+configfile: workflow.source_path('config/pangenome_1kcp.yaml')
+include: 'workflow/rules/pangenome_1kcp.smk'
